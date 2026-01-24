@@ -3,6 +3,7 @@ mod core;
 mod display;
 mod exploration;
 mod models;
+mod raptor;
 mod route_impl;
 mod utils;
 

@@ -150,7 +150,7 @@ pub fn test_plan_journey(hrdf: &Hrdf) {
         8581989,
         create_date_time(2025, 9, 10, 13, 37),
         max_num_explorable_connections,
-        true,
+        verbose,
     );
     println!("==============================================");
 
@@ -162,7 +162,7 @@ pub fn test_plan_journey(hrdf: &Hrdf) {
         8768600,
         create_date_time(2025, 4, 28, 8, 29),
         max_num_explorable_connections,
-        true,
+        verbose,
     );
     println!("==============================================");
 
@@ -174,7 +174,7 @@ pub fn test_plan_journey(hrdf: &Hrdf) {
         8501120,
         create_date_time(2025, 4, 28, 8, 20),
         max_num_explorable_connections,
-        true,
+        verbose,
     );
     println!("==============================================");
 

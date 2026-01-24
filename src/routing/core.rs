@@ -6,10 +6,34 @@ use super::{
     connections::next_departures,
     exploration::explore_routes,
     models::{Route, RouteResult, RouteSection, RoutingAlgorithmArgs, RoutingAlgorithmMode},
+    raptor::raptor_compute,
     utils::{get_stop_connections, sort_routes},
 };
 
+/// Main entry point for routing computation.
+/// Uses the RAPTOR algorithm for efficient route finding.
 pub fn compute_routing(
+    data_storage: &DataStorage,
+    departure_stop_id: i32,
+    departure_at: NaiveDateTime,
+    max_num_explorable_connections: i32,
+    verbose: bool,
+    args: RoutingAlgorithmArgs,
+) -> FxHashMap<i32, RouteResult> {
+    // Use RAPTOR algorithm
+    raptor_compute(
+        data_storage,
+        departure_stop_id,
+        departure_at,
+        max_num_explorable_connections,
+        verbose,
+        args,
+    )
+}
+
+/// Legacy exploration-based routing (kept for reference/comparison)
+#[allow(dead_code)]
+pub fn compute_routing_exploration(
     data_storage: &DataStorage,
     departure_stop_id: i32,
     departure_at: NaiveDateTime,

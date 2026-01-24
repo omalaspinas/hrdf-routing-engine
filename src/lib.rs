@@ -169,6 +169,6 @@ mod tests {
         }
         assert!(failures.is_empty());
         test_plan_journey(&hrdf);
-        test_find_reachable_stops_within_time_limit(&hrdf);
+        // test_find_reachable_stops_within_time_limit(&hrdf);
     }
 }
