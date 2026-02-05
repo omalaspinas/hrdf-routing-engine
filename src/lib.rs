@@ -16,8 +16,8 @@ pub use isochrone::externals::{ExcludedPolygons, LAKES_GEOJSON_URLS};
 pub use isochrone::{IsochroneArgs, IsochroneDisplayMode};
 #[cfg(feature = "hectare")]
 pub use isochrone::{IsochroneHectareArgs, externals::HectareData};
-pub use journey::JourneyArgs;
-pub use routing::{Route, plan_journey, plan_shortest_journey};
+pub use journey::{JourneyArgs, ReverseJourneyArgs};
+pub use routing::{Route, plan_journey, plan_journey_reverse, plan_shortest_journey};
 pub use service::run_service;
 
 #[cfg(test)]
@@ -35,7 +35,7 @@ mod tests {
 
     use test_log::test;
 
-    use crate::{Route, plan_shortest_journey};
+    use crate::{Route, plan_journey, plan_journey_reverse, plan_shortest_journey};
     use futures::future::join_all;
 
     use pretty_assertions::assert_eq;
@@ -347,5 +347,46 @@ mod tests {
         .expect("Failed to create new polygons from cached");
 
         assert_eq!(original, loaded);
+    }
+
+    #[test(tokio::test)]
+    async fn test_reverse_journey_consistency() {
+        let hrdf = Hrdf::try_from_year(2025, false, None).await.unwrap();
+        
+        // Case 1: Simple direct trip
+        // Zürich HB (8503000) -> Bern (8507000)
+        let dep_stop = 8503000;
+        let arr_stop = 8507000;
+        let dep_time = create_date_time(2025, 6, 15, 10, 0); // 10:00
+        
+        println!("Testing Forward: Zürich -> Bern @ 10:00");
+        let forward_route = plan_journey(&hrdf, dep_stop, arr_stop, dep_time, 5, false).unwrap();
+        let arrival_time = forward_route.arrival_at();
+        println!("Forward Found: Dep {:?} -> Arr {:?}", forward_route.departure_at(), arrival_time);
+        
+        println!("Testing Reverse: Zürich -> Bern arriving by {:?}", arrival_time);
+        let reverse_route = plan_journey_reverse(&hrdf, dep_stop, arr_stop, arrival_time, 5, false).unwrap();
+        println!("Reverse Found: Dep {:?} -> Arr {:?}", reverse_route.departure_at(), reverse_route.arrival_at());
+        
+        assert!(reverse_route.departure_at() >= forward_route.departure_at(), 
+            "Reverse departure {:?} should be >= Forward departure {:?}", reverse_route.departure_at(), forward_route.departure_at());
+        assert!(reverse_route.arrival_at() <= arrival_time,
+            "Reverse arrival {:?} should be <= Requested arrival {:?}", reverse_route.arrival_at(), arrival_time);
+            
+        // Case 2: Trip with Transfer
+        // Zürich HB (8503000) -> Zermatt (8501689)
+        // Usually involves Visp.
+        let arr_stop_zermatt = 8501689;
+        println!("Testing Forward: Zürich -> Zermatt @ 08:00");
+        let dep_time_zermatt = create_date_time(2025, 6, 15, 8, 0);
+        let forward_route_z = plan_journey(&hrdf, dep_stop, arr_stop_zermatt, dep_time_zermatt, 8, false).unwrap();
+        let arrival_time_z = forward_route_z.arrival_at();
+        println!("Forward Found: Dep {:?} -> Arr {:?}", forward_route_z.departure_at(), arrival_time_z);
+        
+        println!("Testing Reverse: Zürich -> Zermatt arriving by {:?}", arrival_time_z);
+        let reverse_route_z = plan_journey_reverse(&hrdf, dep_stop, arr_stop_zermatt, arrival_time_z, 8, false).unwrap();
+        println!("Reverse Found: Dep {:?} -> Arr {:?}", reverse_route_z.departure_at(), reverse_route_z.arrival_at());
+        
+        assert!(reverse_route_z.departure_at() >= forward_route_z.departure_at());
     }
 }

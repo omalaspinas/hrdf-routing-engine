@@ -9,8 +9,8 @@ use clap::{Parser, Subcommand};
 use hrdf_parser::Hrdf;
 use hrdf_routing_engine::{
     ExcludedPolygons, IsochroneArgs, IsochroneDisplayMode, JourneyArgs, LAKES_GEOJSON_URLS,
-    RResult, plan_journey, run_average, run_comparison, run_debug, run_optimal, run_service,
-    run_simple, run_worst,
+    RResult, ReverseJourneyArgs, plan_journey, plan_journey_reverse, run_average, run_comparison,
+    run_debug, run_optimal, run_service, run_simple, run_worst,
 };
 #[cfg(feature = "hectare")]
 use hrdf_routing_engine::{HectareData, IsochroneHectareArgs, run_surface_per_ha};
@@ -114,6 +114,45 @@ impl JourneyArgsBuilder {
     }
 }
 
+#[derive(Parser, Debug, Clone)]
+struct ReverseJourneyArgsBuilder {
+    /// Departure stop id
+    #[arg(long, default_value_t = 8587418)]
+    departure_stop_id: i32,
+    /// Arrival stop id
+    #[arg(long, default_value_t = 8595120)]
+    arrival_stop_id: i32,
+    /// Arrival date and time
+    #[arg(short, long, default_value_t = String::from("2025-09-17 18:58:00"))]
+    arrival_at: String,
+    /// Maximum number of connections
+    #[arg(short, long, default_value_t = 10)]
+    max_num_explorable_connections: i32,
+    /// Verbose on or off
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
+}
+
+impl ReverseJourneyArgsBuilder {
+    pub(crate) fn finalize(self) -> RResult<ReverseJourneyArgs> {
+        let Self {
+            departure_stop_id,
+            arrival_stop_id,
+            arrival_at,
+            max_num_explorable_connections,
+            verbose,
+        } = self;
+
+        Ok(ReverseJourneyArgs {
+            departure_stop_id,
+            arrival_stop_id,
+            arrival_at: NaiveDateTime::parse_from_str(&arrival_at, "%Y-%m-%d %H:%M:%S")?,
+            max_num_explorable_connections,
+            verbose,
+        })
+    }
+}
+
 #[cfg(feature = "hectare")]
 #[derive(Parser, Debug)]
 struct IsochroneHectareArgsBuilder {
@@ -173,6 +212,11 @@ enum Mode {
     Journey {
         #[command(flatten)]
         journey_args: JourneyArgsBuilder,
+    },
+    /// Reverse Journey mode to find latest departure
+    ReverseJourney {
+        #[command(flatten)]
+        reverse_journey_args: ReverseJourneyArgsBuilder,
     },
     /// Compare between two years for the optimal isochrone for a given duration
     Compare {
@@ -299,6 +343,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 journey_args.verbose,
             )
             .unwrap_or_else(|| panic!("Error: no journey found for {journey_args}"));
+        }
+        Mode::ReverseJourney {
+            reverse_journey_args,
+        } => {
+            let args = reverse_journey_args.finalize()?;
+            let hrdf = Hrdf::try_from_date(
+                args.arrival_at.date(),
+                cli.force_rebuild,
+                cli.cache_prefix.clone(),
+            )
+            .await?;
+
+            let _ = plan_journey_reverse(
+                &hrdf,
+                args.departure_stop_id,
+                args.arrival_stop_id,
+                args.arrival_at,
+                args.max_num_explorable_connections,
+                args.verbose,
+            )
+            .unwrap_or_else(|| panic!("Error: no reverse journey found for {args}"));
         }
         Mode::Serve { address, ports } => {
             let hrdf_2026 =

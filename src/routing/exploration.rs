@@ -7,9 +7,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::utils::add_minutes_to_date_time;
 
 use super::{
-    connections::get_connections,
+    connections::{get_connections, get_connections_reverse},
     models::{Route, RouteSection},
-    utils::{RouteQueue, clone_update_route, get_stop_connections},
+    utils::{RouteQueue, RouteQueueReverse, clone_update_route, get_stop_connections},
 };
 
 pub fn explore_routes<F>(
@@ -158,6 +158,151 @@ fn explore_nearby_stops(data_storage: &DataStorage, route: &Route, routes: &mut 
                 stop_connection.stop_id_1(),
                 stop_connection.stop_id_2(),
                 add_minutes_to_date_time(route.arrival_at(), stop_connection.duration().into()),
+                Some(stop_connection.duration()),
+            ));
+            cloned_visited_stops.insert(stop_connection.stop_id_2());
+        })
+    })
+    .for_each(|new_route| routes.push(new_route));
+}
+
+pub fn explore_routes_reverse<F>(
+    data_storage: &DataStorage,
+    mut routes: RouteQueueReverse,
+    journeys_to_ignore: &mut FxHashSet<i32>,
+    latest_arrival_by_stop_id: &mut FxHashMap<i32, NaiveDateTime>,
+    mut can_continue_exploration: F,
+) -> RouteQueueReverse
+where
+    F: FnMut(&Route) -> bool,
+{
+    let mut new_routes = RouteQueueReverse::new();
+
+    let mut visited_routes = HashSet::new();
+    while let Some(route) = routes.pop() {
+        if !can_continue_exploration(&route) {
+            continue;
+        }
+
+        if route.last_section().departure_stop_id() == route.last_section().arrival_stop_id() {
+            continue;
+        }
+
+        explore_last_route_section_more_if_possible_reverse(data_storage, &route, &mut routes);
+
+        if !can_explore_connections_reverse(data_storage, &route, latest_arrival_by_stop_id) {
+            if visited_routes.contains(&route) {
+                // log::info!("Routes stayed the same: {}", routes.len());
+                visited_routes.remove(&route);
+                let _ = routes.pop();
+            } else {
+                visited_routes.insert(route.clone());
+            }
+            continue;
+        }
+
+        explore_nearby_stops_reverse(data_storage, &route, &mut routes);
+        explore_connections_reverse(data_storage, &route, journeys_to_ignore, &mut new_routes);
+    }
+
+    new_routes.iter_routes().for_each(|route| {
+        if let Some(journey_id) = route.last_section().journey_id() {
+            journeys_to_ignore.insert(journey_id);
+        }
+    });
+
+    new_routes
+}
+
+fn explore_last_route_section_more_if_possible_reverse(
+    data_storage: &DataStorage,
+    route: &Route,
+    routes: &mut RouteQueueReverse,
+) {
+    let Some(journey_id) = route.last_section().journey_id() else {
+        return;
+    };
+
+    // The previous section is visited if possible.
+    // Note: extend_reverse needs is_arrival_date = true because route.arrival_at() corresponds
+    // to the arrival time at the current stop (physically).
+    let new_route = route.extend_reverse(data_storage, journey_id, route.arrival_at().date(), true);
+
+    if let Some(rou) = new_route {
+        routes.push(rou);
+    }
+}
+
+fn can_explore_connections_reverse(
+    data_storage: &DataStorage,
+    route: &Route,
+    latest_arrival_by_stop_id: &mut FxHashMap<i32, NaiveDateTime>,
+) -> bool {
+    let stop_id = route.arrival_stop_id();
+    let stop = data_storage.stops().find(stop_id);
+    let stop = if let Some(stop) = stop {
+        stop
+    } else {
+        log::warn!("Stop: {} not found.", stop_id);
+        return false;
+    };
+
+    if !stop.can_be_used_as_exchange_point() {
+        return false;
+    }
+
+    let arrival_at = route.arrival_at();
+
+    if let Some(&latest_arrival) = latest_arrival_by_stop_id.get(&stop_id) {
+        if arrival_at > latest_arrival {
+            // The route arrived LATER than the last route recorded for the stop (which is better for reverse search).
+            latest_arrival_by_stop_id.insert(stop_id, arrival_at);
+            true
+        } else {
+            // Another route reached the stop later (better).
+            false
+        }
+    } else {
+        latest_arrival_by_stop_id.insert(stop_id, arrival_at);
+        true
+    }
+}
+
+fn explore_connections_reverse(
+    data_storage: &DataStorage,
+    route: &Route,
+    journeys_to_ignore: &FxHashSet<i32>,
+    new_routes: &mut RouteQueueReverse,
+) {
+    for route in get_connections_reverse(data_storage, route, journeys_to_ignore) {
+        new_routes.push(route);
+    }
+}
+
+fn explore_nearby_stops_reverse(data_storage: &DataStorage, route: &Route, routes: &mut RouteQueueReverse) {
+    if route.last_section().journey_id().is_none() {
+        return;
+    }
+    match get_stop_connections(data_storage, route.arrival_stop_id()) {
+        Some(stop_connections) => stop_connections,
+        None => return,
+    }
+    .into_iter()
+    .filter(|stop_connection| {
+        data_storage
+            .stops()
+            .data()
+            .contains_key(&stop_connection.stop_id_2())
+    })
+    .filter(|stop_connection| !route.visited_stops().contains(&stop_connection.stop_id_2()))
+    .map(|stop_connection| {
+        clone_update_route(route, |cloned_sections, cloned_visited_stops| {
+            cloned_sections.push(RouteSection::new(
+                None,
+                stop_connection.stop_id_1(),
+                stop_connection.stop_id_2(),
+                // In reverse, we subtract the walking duration to find when we started walking
+                add_minutes_to_date_time(route.arrival_at(), -(stop_connection.duration() as i64)),
                 Some(stop_connection.duration()),
             ));
             cloned_visited_stops.insert(stop_connection.stop_id_2());

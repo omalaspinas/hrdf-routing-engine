@@ -60,6 +60,10 @@ impl RouteSection {
         self.duration
     }
 
+    pub fn is_walking_trip(&self) -> bool {
+        self.journey_id.is_none()
+    }
+
     // Functions
 
     // pub fn journey<'a>(&'a self, data_storage: &'a DataStorage) -> Option<&Journey> {

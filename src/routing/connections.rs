@@ -3,7 +3,7 @@ use hrdf_parser::{DataStorage, Journey, Model, TransportType, timetable_end_date
 use rustc_hash::FxHashSet;
 
 use crate::utils::{
-    add_1_day, add_minutes_to_date_time, count_days_between_two_dates, create_time,
+    add_1_day, add_minus_1_day, add_minutes_to_date_time, count_days_between_two_dates, create_time,
 };
 
 use super::{models::Route, utils::get_routes_to_ignore};
@@ -32,6 +32,151 @@ pub fn get_connections(
         )
     })
     .collect()
+}
+
+pub fn get_connections_reverse(
+    data_storage: &DataStorage,
+    route: &Route,
+    journeys_to_ignore: &FxHashSet<i32>,
+) -> Vec<Route> {
+    previous_departures(
+        data_storage,
+        route.arrival_stop_id(),
+        route.arrival_at(),
+        Some(get_routes_to_ignore(data_storage, route)),
+        route.last_section().journey_id(),
+    )
+    .into_iter()
+    // A journey is removed if it has already been explored at a lower connection level.
+    .filter(|(journey, _)| !journeys_to_ignore.contains(&journey.id()))
+    .filter_map(|(journey, journey_arrival_at)| {
+        route.extend_reverse(
+            data_storage,
+            journey.id(),
+            journey_arrival_at.date(),
+            true,
+        )
+    })
+    .collect()
+}
+
+pub fn previous_departures(
+    data_storage: &DataStorage,
+    arrival_stop_id: i32,
+    arrival_at: NaiveDateTime,
+    routes_to_ignore: Option<FxHashSet<u64>>,
+    next_journey_id: Option<i32>,
+) -> Vec<(&Journey, NaiveDateTime)> {
+    fn get_journeys(
+        data_storage: &DataStorage,
+        date: NaiveDate,
+        stop_id: i32,
+    ) -> (Vec<(&Journey, NaiveDateTime)>, NaiveDateTime) {
+        let mut min_arrival_at = NaiveDateTime::new(date, create_time(23, 59));
+
+        let journeys = get_operating_journeys(data_storage, date, stop_id)
+            .into_iter()
+            .filter(|journey| {
+                !journey.is_first_stop(stop_id, true).unwrap()
+                    && journey.arrival_at_of(stop_id, date).is_ok()
+            })
+            .map(|journey| {
+                let journey_arrival_at = journey.arrival_at_of(stop_id, date).unwrap();
+                if journey_arrival_at < min_arrival_at {
+                    min_arrival_at = journey_arrival_at;
+                }
+                (journey, journey_arrival_at)
+            })
+            .collect();
+        (journeys, min_arrival_at)
+    }
+
+    let (journeys_1, mut min_arrival_at_journeys_1_adjusted) =
+        get_journeys(data_storage, arrival_at.date(), arrival_stop_id);
+    min_arrival_at_journeys_1_adjusted = min_arrival_at_journeys_1_adjusted
+        .checked_add_signed(Duration::hours(4))
+        .unwrap();
+
+    let (journeys_2, min_arrival_at) = if arrival_at < min_arrival_at_journeys_1_adjusted {
+        // The journeys of the previous day are also loaded.
+        // The minimum arrival time is 20:00 the previous day.
+        let previous_date = add_minus_1_day(arrival_at.date());
+        let (journeys, _) = get_journeys(data_storage, previous_date, arrival_stop_id);
+        let min_arrival_at = NaiveDateTime::new(previous_date, create_time(20, 0));
+
+        (journeys, min_arrival_at)
+    } else {
+        let min_arrival_at = if arrival_at.time() > create_time(20, 0) {
+            // The minimum arrival time is 20:00.
+            NaiveDateTime::new(arrival_at.date(), create_time(20, 0))
+        } else {
+            // The minimum arrival time is 4 hours earlier.
+            arrival_at.checked_add_signed(Duration::hours(-4)).unwrap()
+        };
+
+        (Vec::new(), min_arrival_at)
+    };
+
+    let mut journeys: Vec<(&Journey, NaiveDateTime)> = [journeys_1, journeys_2]
+        .concat()
+        .into_iter()
+        .filter(|&(_, journey_arrival_at)| {
+            // Journeys that arrive too early or too late are ignored.
+            journey_arrival_at <= arrival_at && journey_arrival_at >= min_arrival_at
+        })
+        .collect();
+
+    // Journeys are sorted by descending arrival time (LATEST arrival first).
+    journeys.sort_by(|(_, a), (_, b)| b.cmp(a));
+
+    let mut routes_to_ignore = routes_to_ignore.unwrap_or_default();
+
+    journeys
+        .into_iter()
+        .filter(|(journey, _)| {
+            let hash = journey.hash_route(arrival_stop_id).unwrap();
+
+            if !routes_to_ignore.contains(&hash) {
+                routes_to_ignore.insert(hash);
+                true
+            } else {
+                false
+            }
+        })
+        .filter(|&(journey, journey_arrival_at)| {
+            // It is checked that there is enough time to embark on the journey (exchange time).
+            next_journey_id.is_none_or(|id| {
+                let next_journey = data_storage
+                    .journeys()
+                    .find(id)
+                    .expect("Error: next journey not found");
+
+                // We check if the pair legagy_id is the same because it indicates
+                // that it is the same train continuing the journey
+                if !has_through_service(
+                    data_storage,
+                    arrival_at.date(),
+                    journey.legacy_id(),
+                    journey.administration(),
+                    next_journey.legacy_id(),
+                    next_journey.administration(),
+                    arrival_stop_id,
+                ) {
+                    let exchange_time = get_exchange_time(
+                        data_storage,
+                        arrival_stop_id,
+                        journey.id(),
+                        id,
+                        journey_arrival_at,
+                    );
+                    add_minutes_to_date_time(journey_arrival_at, exchange_time.into())
+                        <= arrival_at
+                } else {
+                    true
+                }
+            })
+        })
+        .collect()
 }
 
 pub fn next_departures(

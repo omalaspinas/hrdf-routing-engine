@@ -76,6 +76,81 @@ impl RouteQueue {
     }
 }
 
+#[derive(Debug)]
+struct RouteHeapItemReverse {
+    arrival_at: NaiveDateTime,
+    seq: u64,
+    route: Route,
+}
+
+impl Eq for RouteHeapItemReverse {}
+
+impl PartialEq for RouteHeapItemReverse {
+    fn eq(&self, other: &Self) -> bool {
+        self.arrival_at == other.arrival_at && self.seq == other.seq
+    }
+}
+
+impl Ord for RouteHeapItemReverse {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse ordering compared to RouteHeapItem:
+        // We want the LATEST time (larger NaiveDateTime) to be popped FIRST.
+        // BinaryHeap is a Max-Heap (pops largest element).
+        // Standard NaiveDateTime comparison: t1 > t2 means t1 is "larger" (later).
+        // So simply comparing self.arrival_at with other.arrival_at gives us a Max-Heap behavior on time.
+        // Later times will be popped first.
+        match self.arrival_at.cmp(&other.arrival_at) {
+            Ordering::Equal => other.seq.cmp(&self.seq), // Keep FIFO for same time
+            ordering => ordering,
+        }
+    }
+}
+
+impl PartialOrd for RouteHeapItemReverse {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+pub struct RouteQueueReverse {
+    heap: BinaryHeap<RouteHeapItemReverse>,
+    seq: u64,
+}
+
+impl RouteQueueReverse {
+    pub fn new() -> Self {
+        Self {
+            heap: BinaryHeap::new(),
+            seq: 0,
+        }
+    }
+
+    pub fn push(&mut self, route: Route) {
+        self.heap.push(RouteHeapItemReverse {
+            arrival_at: route.arrival_at(),
+            seq: self.seq,
+            route,
+        });
+        self.seq += 1;
+    }
+
+    pub fn pop(&mut self) -> Option<Route> {
+        self.heap.pop().map(|item| item.route)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.heap.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.heap.len()
+    }
+
+    pub fn iter_routes(&self) -> impl Iterator<Item = &Route> {
+        self.heap.iter().map(|item| &item.route)
+    }
+}
+
 pub fn clone_update_route<F>(route: &Route, f: F) -> Route
 where
     F: FnOnce(&mut Vec<RouteSection>, &mut FxHashSet<i32>),
@@ -340,5 +415,29 @@ mod tests {
         queue.push(create_test_route("11:00", 4));
         // Seq should continue incrementing
         assert_eq!(queue.seq, 4);
+    }
+
+    #[test]
+    fn test_route_queue_reverse_ordering() {
+        let mut queue = RouteQueueReverse::new();
+
+        // Push routes with different times
+        let route_08_00 = create_test_route("08:00", 1);
+        let route_10_00 = create_test_route("10:00", 2);
+        let route_12_00 = create_test_route("12:00", 3);
+
+        queue.push(route_08_00.clone());
+        queue.push(route_10_00.clone());
+        queue.push(route_12_00.clone());
+
+        // In reverse queue (Max-Heap), the LATEST time should come first
+        let popped1 = queue.pop().unwrap();
+        assert_eq!(popped1.arrival_at(), route_12_00.arrival_at());
+
+        let popped2 = queue.pop().unwrap();
+        assert_eq!(popped2.arrival_at(), route_10_00.arrival_at());
+
+        let popped3 = queue.pop().unwrap();
+        assert_eq!(popped3.arrival_at(), route_08_00.arrival_at());
     }
 }

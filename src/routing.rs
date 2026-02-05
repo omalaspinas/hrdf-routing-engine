@@ -18,7 +18,7 @@ pub use models::RouteResult as Route;
 pub use models::RouteSectionResult as RouteSection;
 use orx_parallel::*;
 
-use core::compute_routing;
+use core::{compute_routing, compute_routing_reverse};
 
 use chrono::{Duration, NaiveDateTime};
 use models::RoutingAlgorithmArgs;
@@ -44,6 +44,33 @@ pub fn plan_journey(
         RoutingAlgorithmArgs::solve_from_departure_stop_to_arrival_stop(arrival_stop_id),
     )
     .remove(&arrival_stop_id);
+
+    if verbose && let Some(rou) = &result {
+        println!();
+        rou.print(hrdf.data_storage());
+    }
+
+    result
+}
+
+/// Finds the latest possible departure from the departure stop to arrive at the arrival stop by arrival_at.
+pub fn plan_journey_reverse(
+    hrdf: &Hrdf,
+    departure_stop_id: i32,
+    arrival_stop_id: i32,
+    arrival_at: NaiveDateTime,
+    max_num_explorable_connections: i32,
+    verbose: bool,
+) -> Option<Route> {
+    let result = compute_routing_reverse(
+        hrdf.data_storage(),
+        arrival_stop_id,
+        arrival_at,
+        max_num_explorable_connections,
+        verbose,
+        RoutingAlgorithmArgs::solve_from_departure_stop_to_arrival_stop(departure_stop_id),
+    )
+    .remove(&departure_stop_id);
 
     if verbose && let Some(rou) = &result {
         println!();
