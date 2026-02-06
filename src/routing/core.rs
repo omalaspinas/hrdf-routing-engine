@@ -271,8 +271,8 @@ fn is_improving_solution(
         let stop_count_2 = count_stops(data_storage, sections_2[i]);
 
         if stop_count_1 != stop_count_2 {
-            // If the candidate crosses more stops than the solution, then it is a better solution.
-            return stop_count_1 > stop_count_2;
+            // If the candidate crosses less stops than the solution, then it is a better solution.
+            return stop_count_1 < stop_count_2;
         }
     }
 
@@ -414,7 +414,7 @@ fn update_departure_stop_reverse(
 ) -> Route {
     let last_section = route.last_section();
     let journey = last_section.journey(data_storage).unwrap();
-    
+
     // We want the physical departure time from target_origin_id.
     // last_section.arrival_at() is the physical departure time from the current frontier (A).
     // The journey goes A -> ... -> T -> ... -> B. (where T is target)
@@ -431,7 +431,7 @@ fn update_departure_stop_reverse(
     // So T is physically AFTER A.
     // So departure from T is LATER than departure from A.
     // Correct.
-    
+
     // We use departure_at_of_with_origin to find departure time from T.
     let new_arrival_at = journey
         .departure_at_of_with_origin(
@@ -469,11 +469,11 @@ fn is_improving_solution_reverse(
         section
             .journey(data_storage)
             .unwrap()
-            .count_stops(section.arrival_stop_id(), section.departure_stop_id()) 
-            // Note: swapped for physical direction A->B (Sec: B->A)
-            // count_stops(dep, arr) usually expects physical direction.
-            // Section: dep=B, arr=A. Physical: A->B.
-            // So we pass (A, B) -> (arr, dep).
+            .count_stops(section.arrival_stop_id(), section.departure_stop_id())
+        // Note: swapped for physical direction A->B (Sec: B->A)
+        // count_stops(dep, arr) usually expects physical direction.
+        // Section: dep=B, arr=A. Physical: A->B.
+        // So we pass (A, B) -> (arr, dep).
     }
 
     if candidate.sections().len() == 1 && candidate.last_section().journey_id().is_none() {
@@ -509,7 +509,7 @@ fn is_improving_solution_reverse(
         let stop_count_2 = count_stops(data_storage, sections_2[i]);
 
         if stop_count_1 != stop_count_2 {
-            return stop_count_1 > stop_count_2;
+            return stop_count_1 < stop_count_2;
         }
     }
 

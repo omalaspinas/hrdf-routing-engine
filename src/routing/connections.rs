@@ -1,4 +1,4 @@
-use chrono::{Duration, NaiveDate, NaiveDateTime};
+use chrono::{Duration, NaiveDate, NaiveDateTime, Timelike};
 use hrdf_parser::{DataStorage, Journey, Model, TransportType, timetable_end_date};
 use rustc_hash::FxHashSet;
 
@@ -50,12 +50,7 @@ pub fn get_connections_reverse(
     // A journey is removed if it has already been explored at a lower connection level.
     .filter(|(journey, _)| !journeys_to_ignore.contains(&journey.id()))
     .filter_map(|(journey, journey_arrival_at)| {
-        route.extend_reverse(
-            data_storage,
-            journey.id(),
-            journey_arrival_at.date(),
-            true,
-        )
+        route.extend_reverse(data_storage, journey.id(), journey_arrival_at.date(), true)
     })
     .collect()
 }
@@ -129,57 +124,131 @@ pub fn previous_departures(
     // Journeys are sorted by descending arrival time (LATEST arrival first).
     journeys.sort_by(|(_, a), (_, b)| b.cmp(a));
 
-    let mut routes_to_ignore = routes_to_ignore.unwrap_or_default();
+        let mut routes_to_ignore = routes_to_ignore.unwrap_or_default();
 
-    journeys
-        .into_iter()
-        .filter(|(journey, _)| {
-            let hash = journey.hash_route(arrival_stop_id).unwrap();
+    
 
-            if !routes_to_ignore.contains(&hash) {
-                routes_to_ignore.insert(hash);
-                true
-            } else {
-                false
-            }
-        })
-        .filter(|&(journey, journey_arrival_at)| {
-            // It is checked that there is enough time to embark on the journey (exchange time).
-            next_journey_id.is_none_or(|id| {
-                let next_journey = data_storage
-                    .journeys()
-                    .find(id)
-                    .expect("Error: next journey not found");
+        if arrival_stop_id == 8506000 && arrival_at.hour() == 9 && arrival_at.minute() == 58 {
 
-                // We check if the pair legagy_id is the same because it indicates
-                // that it is the same train continuing the journey
-                if !has_through_service(
-                    data_storage,
-                    arrival_at.date(),
-                    journey.legacy_id(),
-                    journey.administration(),
-                    next_journey.legacy_id(),
-                    next_journey.administration(),
-                    arrival_stop_id,
-                ) {
-                    let exchange_time = get_exchange_time(
-                        data_storage,
-                        arrival_stop_id,
-                        journey.id(),
-                        id,
-                        journey_arrival_at,
-                    );
-                    add_minutes_to_date_time(journey_arrival_at, exchange_time.into())
-                        <= arrival_at
-                } else {
+            println!("Checking previous departures for {} at {}", arrival_stop_id, arrival_at);
+
+        }
+
+    
+
+        journeys
+
+            .into_iter()
+
+            .filter(|(journey, journey_arrival_at)| {
+
+                let hash = journey.hash_route(arrival_stop_id).unwrap();
+
+                let is_target = arrival_stop_id == 8506000 && arrival_at.hour() == 9 && arrival_at.minute() == 58;
+
+    
+
+                if !routes_to_ignore.contains(&hash) {
+
+                    routes_to_ignore.insert(hash);
+
+                    if is_target { println!("  Journey {} ({:?}) accepted by hash", journey.id(), journey_arrival_at); }
+
                     true
-                }
-            })
-        })
-        .collect()
-}
 
-pub fn next_departures(
+                } else {
+
+                    if is_target { println!("  Journey {} ({:?}) ignored by hash", journey.id(), journey_arrival_at); }
+
+                    false
+
+                }
+
+            })
+
+            .filter(|&(journey, journey_arrival_at)| {
+
+                let is_target = arrival_stop_id == 8506000 && arrival_at.hour() == 9 && arrival_at.minute() == 58;
+
+                // It is checked that there is enough time to embark on the journey (exchange time).
+
+                next_journey_id.is_none_or(|id| {
+
+                    let next_journey = data_storage
+
+                        .journeys()
+
+                        .find(id)
+
+                        .expect("Error: next journey not found");
+
+    
+
+                    // We check if the pair legagy_id is the same because it indicates
+
+                    // that it is the same train continuing the journey
+
+                    if !has_through_service(
+
+                        data_storage,
+
+                        arrival_at.date(),
+
+                        journey.legacy_id(),
+
+                        journey.administration(),
+
+                        next_journey.legacy_id(),
+
+                        next_journey.administration(),
+
+                        arrival_stop_id,
+
+                    ) {
+
+                        let exchange_time = get_exchange_time(
+
+                            data_storage,
+
+                            arrival_stop_id,
+
+                            journey.id(),
+
+                            id,
+
+                            journey_arrival_at,
+
+                        );
+
+                        let valid = add_minutes_to_date_time(journey_arrival_at, exchange_time.into())
+
+                            <= arrival_at;
+
+                        if is_target && !valid {
+
+                             println!("  Journey {} rejected by exchange time. Arr: {:?}, Next Dep: {:?}, Exch: {}", journey.id(), journey_arrival_at, arrival_at, exchange_time);
+
+                        }
+
+                        valid
+
+                    } else {
+
+                        true
+
+                    }
+
+                })
+
+            })
+
+            .collect()
+
+    }
+
+    
+
+    pub fn next_departures(
     data_storage: &DataStorage,
     departure_stop_id: i32,
     departure_at: NaiveDateTime,

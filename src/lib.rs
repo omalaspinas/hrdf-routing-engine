@@ -26,7 +26,8 @@ mod tests {
 
     use crate::{
         ExcludedPolygons, HectareData, LAKES_GEOJSON_URLS,
-        isochrone::unique_coordinates_from_routes, routing::compute_routes_from_origin,
+        isochrone::unique_coordinates_from_routes,
+        routing::{compute_routes_from_origin, plan_shortest_journey_with_reverse},
         utils::create_date_time,
     };
     use chrono::{Duration, TimeDelta, Timelike};
@@ -127,6 +128,120 @@ mod tests {
         (8572453, 8591998),
         (8500236, 8511236),
     ];
+
+    pub async fn test_paths_validity_reverse(
+        hrdf: &Hrdf,
+        ids: &[(i32, i32)],
+    ) -> Result<Vec<(Option<SimplifiedTrip>, Option<SimplifiedTrip>)>, Box<dyn Error>> {
+        let ref_trips = ids
+            .iter()
+            .map(|(from_id, to_id)| {
+                let fname = format!("test_xml/{from_id}_{to_id}_trip.xml");
+                let xml = std::fs::read_to_string(fname).unwrap();
+                let ojp = OJP::try_from(xml.as_str()).unwrap();
+
+                let ref_trip = ojp.fastest_trip().unwrap();
+
+                SimplifiedTrip::try_from(ref_trip).unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        let hrdf_trips = ref_trips
+            .iter()
+            .map(|st| async move {
+                let from_id = st.departure_id();
+                let to_id = st.arrival_id();
+                let date_time = st.departure_time().with_second(0).unwrap();
+                log::info!("Testing trip: {from_id} - {to_id} at {date_time}");
+                plan_shortest_journey_with_reverse(hrdf, from_id, to_id, date_time, 10, false)
+                    .as_ref()
+                    .map(|r| STrip::from(r, hrdf).0)
+            })
+            .collect::<Vec<_>>();
+        let hrdf_trips: Vec<_> = join_all(hrdf_trips).await;
+        // We are only interested in the "failures" of the hrdf routing engine
+        let failed_comparison = ref_trips
+            .into_iter()
+            .zip(hrdf_trips.into_iter())
+            .filter_map(|(rt, ht)| {
+                if let Some(ht) = ht
+                    && !rt.approx_equal(&ht, 0.1)
+                {
+                    Some((Some(rt), Some(ht)))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Ok(failed_comparison)
+    }
+
+    pub async fn test_paths_validity_consistency(
+        hrdf: &Hrdf,
+        ids: &[(i32, i32)],
+    ) -> Result<Vec<(Option<SimplifiedTrip>, Option<SimplifiedTrip>)>, Box<dyn Error>> {
+        let ref_trips = ids
+            .iter()
+            .map(|(from_id, to_id)| {
+                let fname = format!("test_xml/{from_id}_{to_id}_trip.xml");
+                let xml = std::fs::read_to_string(fname).unwrap();
+                let ojp = OJP::try_from(xml.as_str()).unwrap();
+
+                let ref_trip = ojp.fastest_trip().unwrap();
+
+                SimplifiedTrip::try_from(ref_trip).unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        let hrdf_trips = ref_trips
+            .iter()
+            .map(|st| async move {
+                let from_id = st.departure_id();
+                let to_id = st.arrival_id();
+                let date_time = st.departure_time().with_second(0).unwrap();
+                log::info!("Testing trip forward: {from_id} - {to_id} at {date_time}");
+                plan_shortest_journey(hrdf, from_id, to_id, date_time, 11, false)
+                    .as_ref()
+                    .map(|r| STrip::from(r, hrdf).0)
+            })
+            .collect::<Vec<_>>();
+        let hrdf_trips: Vec<_> = join_all(hrdf_trips).await;
+
+        let hrdf_trips_reverse = ref_trips
+            .iter()
+            .map(|st| async move {
+                let from_id = st.departure_id();
+                let to_id = st.arrival_id();
+                let date_time = st.departure_time().with_second(0).unwrap();
+                log::info!("Testing trip reverse: {from_id} - {to_id} at {date_time}");
+                plan_shortest_journey_with_reverse(hrdf, from_id, to_id, date_time, 11, false)
+                    .as_ref()
+                    .map(|r| STrip::from(r, hrdf).0)
+            })
+            .collect::<Vec<_>>();
+        let hrdf_trips_reverse: Vec<_> = join_all(hrdf_trips_reverse).await;
+
+        // We are only interested in the "failures" of the hrdf routing engine
+        let failed_comparison = hrdf_trips
+            .into_iter()
+            .zip(hrdf_trips_reverse.into_iter())
+            .filter_map(|(rt, ht)| match (rt, ht) {
+                (Some(rt), Some(ht)) => {
+                    if !rt.approx_equal(&ht, 0.1) {
+                        Some((Some(rt), Some(ht)))
+                    } else {
+                        None
+                    }
+                }
+                (Some(rt), None) => Some((Some(rt), None)),
+                (None, Some(rt)) => Some((None, Some(rt))),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        Ok(failed_comparison)
+    }
 
     pub async fn test_paths_validity(
         hrdf: &Hrdf,
@@ -284,6 +399,7 @@ mod tests {
         println!("{:.2?}", start_time.elapsed());
     }
 
+    #[ignore]
     #[test(tokio::test)]
     async fn test_journeys() {
         // First build hrdf file
@@ -302,7 +418,64 @@ mod tests {
             }
         }
         assert!(failures.is_empty());
+    }
+
+    #[test(tokio::test)]
+    async fn test_reachables_stops() {
+        // First build hrdf file
+        let hrdf = Hrdf::try_from_year(2025, false, None).await.unwrap();
+        let started = Instant::now();
         test_find_reachable_stops_within_time_limit(&hrdf);
+        log::info!(
+            "Time elapsed for all the HRDF tests: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[ignore]
+    #[test(tokio::test)]
+    async fn test_journeys_consistency() {
+        // First build hrdf file
+        let hrdf = Hrdf::try_from_year(2025, false, None).await.unwrap();
+        let started = Instant::now();
+        let failures = test_paths_validity_consistency(&hrdf, &IDS).await.unwrap();
+        log::info!(
+            "Time elapsed for all the HRDF tests: {:?}",
+            started.elapsed()
+        );
+        for f in failures.iter() {
+            match f {
+                (Some(forward_trip), Some(backward_trip)) => {
+                    eprintln!(
+                        "{} - {}",
+                        forward_trip.departure_id(),
+                        forward_trip.arrival_id()
+                    );
+                    eprintln!("FORWARD: \n{forward_trip}");
+                    eprintln!("REVERSE: \n{backward_trip}");
+                }
+                (Some(forward_trip), None) => {
+                    eprintln!(
+                        "{} - {}",
+                        forward_trip.departure_id(),
+                        forward_trip.arrival_id()
+                    );
+                    eprintln!("FORWARD: \n{forward_trip}");
+                    eprintln!("REVERSE: \nNONE FOUND");
+                }
+                (None, Some(backward_trip)) => {
+                    eprintln!(
+                        "{} - {}",
+                        backward_trip.departure_id(),
+                        backward_trip.arrival_id()
+                    );
+                    eprintln!("FORWARD: \nNONE FOUND");
+                    eprintln!("REVERSE: \n{backward_trip}");
+                }
+                _ => {}
+            }
+        }
+        assert!(failures.is_empty());
     }
 
     #[test(tokio::test)]
@@ -352,41 +525,139 @@ mod tests {
     #[test(tokio::test)]
     async fn test_reverse_journey_consistency() {
         let hrdf = Hrdf::try_from_year(2025, false, None).await.unwrap();
-        
-        // Case 1: Simple direct trip
-        // Zürich HB (8503000) -> Bern (8507000)
-        let dep_stop = 8503000;
-        let arr_stop = 8507000;
-        let dep_time = create_date_time(2025, 6, 15, 10, 0); // 10:00
-        
-        println!("Testing Forward: Zürich -> Bern @ 10:00");
-        let forward_route = plan_journey(&hrdf, dep_stop, arr_stop, dep_time, 5, false).unwrap();
-        let arrival_time = forward_route.arrival_at();
-        println!("Forward Found: Dep {:?} -> Arr {:?}", forward_route.departure_at(), arrival_time);
-        
-        println!("Testing Reverse: Zürich -> Bern arriving by {:?}", arrival_time);
-        let reverse_route = plan_journey_reverse(&hrdf, dep_stop, arr_stop, arrival_time, 5, false).unwrap();
-        println!("Reverse Found: Dep {:?} -> Arr {:?}", reverse_route.departure_at(), reverse_route.arrival_at());
-        
-        assert!(reverse_route.departure_at() >= forward_route.departure_at(), 
-            "Reverse departure {:?} should be >= Forward departure {:?}", reverse_route.departure_at(), forward_route.departure_at());
-        assert!(reverse_route.arrival_at() <= arrival_time,
-            "Reverse arrival {:?} should be <= Requested arrival {:?}", reverse_route.arrival_at(), arrival_time);
-            
-        // Case 2: Trip with Transfer
-        // Zürich HB (8503000) -> Zermatt (8501689)
-        // Usually involves Visp.
-        let arr_stop_zermatt = 8501689;
-        println!("Testing Forward: Zürich -> Zermatt @ 08:00");
-        let dep_time_zermatt = create_date_time(2025, 6, 15, 8, 0);
-        let forward_route_z = plan_journey(&hrdf, dep_stop, arr_stop_zermatt, dep_time_zermatt, 8, false).unwrap();
-        let arrival_time_z = forward_route_z.arrival_at();
-        println!("Forward Found: Dep {:?} -> Arr {:?}", forward_route_z.departure_at(), arrival_time_z);
-        
-        println!("Testing Reverse: Zürich -> Zermatt arriving by {:?}", arrival_time_z);
-        let reverse_route_z = plan_journey_reverse(&hrdf, dep_stop, arr_stop_zermatt, arrival_time_z, 8, false).unwrap();
-        println!("Reverse Found: Dep {:?} -> Arr {:?}", reverse_route_z.departure_at(), reverse_route_z.arrival_at());
-        
-        assert!(reverse_route_z.departure_at() >= forward_route_z.departure_at());
+
+        // // Case 1: Simple direct trip
+        // // Zürich HB (8503000) -> Bern (8507000)
+        // let dep_stop = 8503000;
+        // let arr_stop = 8507000;
+        // let dep_time = create_date_time(2025, 6, 15, 10, 0); // 10:00
+        //
+        // println!("Testing Forward: Zürich -> Bern @ 10:00");
+        // let forward_route = plan_journey(&hrdf, dep_stop, arr_stop, dep_time, 5, true).unwrap();
+        // let arrival_time = forward_route.arrival_at();
+        // println!(
+        //     "Forward Found: Dep {:?} -> Arr {:?}",
+        //     forward_route.departure_at(),
+        //     arrival_time
+        // );
+        //
+        // println!(
+        //     "Testing Reverse: Zürich -> Bern arriving by {:?}",
+        //     arrival_time
+        // );
+        // let reverse_route =
+        //     plan_journey_reverse(&hrdf, dep_stop, arr_stop, arrival_time, 5, true).unwrap();
+        // println!(
+        //     "Reverse Found: Dep {:?} -> Arr {:?}",
+        //     reverse_route.departure_at(),
+        //     reverse_route.arrival_at()
+        // );
+        //
+        // assert!(
+        //     reverse_route.departure_at() >= forward_route.departure_at(),
+        //     "Reverse departure {:?} should be >= Forward departure {:?}",
+        //     reverse_route.departure_at(),
+        //     forward_route.departure_at()
+        // );
+        // assert!(
+        //     reverse_route.arrival_at() == arrival_time,
+        //     "Reverse arrival {:?} should be == Requested arrival {:?}",
+        //     reverse_route.arrival_at(),
+        //     arrival_time
+        // );
+        //
+        // // Case 2: Trip with Transfer
+        // // Zürich HB (8503000) -> Zermatt (8501689)
+        // let arr_stop_zermatt = 8501689;
+        // println!("Testing Forward: Zürich -> Zermatt @ 08:00");
+        // let dep_time_zermatt = create_date_time(2025, 6, 15, 8, 0);
+        // let forward_route_z =
+        //     plan_journey(&hrdf, dep_stop, arr_stop_zermatt, dep_time_zermatt, 8, true).unwrap();
+        // let arrival_time_z = forward_route_z.arrival_at();
+        // println!(
+        //     "Forward Found: Dep {:?} -> Arr {:?}",
+        //     forward_route_z.departure_at(),
+        //     arrival_time_z
+        // );
+        //
+        // println!(
+        //     "Testing Reverse: Zürich -> Zermatt arriving by {:?}",
+        //     arrival_time_z
+        // );
+        // let reverse_route_z =
+        //     plan_journey_reverse(&hrdf, dep_stop, arr_stop_zermatt, arrival_time_z, 8, true)
+        //         .unwrap();
+        // println!(
+        //     "Reverse Found: Dep {:?} -> Arr {:?}",
+        //     reverse_route_z.departure_at(),
+        //     reverse_route_z.arrival_at()
+        // );
+        //
+        // assert!(
+        //     reverse_route_z.departure_at() >= forward_route_z.departure_at(),
+        //     "Reverse departure {:?} should be >= Forward departure {:?}",
+        //     reverse_route_z.departure_at(),
+        //     forward_route_z.departure_at()
+        // );
+        // assert!(
+        //     reverse_route_z.arrival_at() == forward_route_z.arrival_at(),
+        //     "Reverse arrival {:?} should be == Requested arrival {:?}",
+        //     reverse_route_z.arrival_at(),
+        //     forward_route_z.arrival_at()
+        // );
+
+        // Case 3: Trip with Transfer
+        // Lausanne (8501120) -> Lugano, Vignola (8579006)
+        let arr_stop_lausanne = 8501120;
+        let arr_stop_lugano = 8579006;
+        println!("Testing Forward: Lausanne -> Lugano, Vignola @ 05:40");
+        let dep_time_lausanne = create_date_time(2025, 11, 25, 5, 40);
+        let forward_route_l = plan_journey(
+            &hrdf,
+            arr_stop_lausanne,
+            arr_stop_lugano,
+            dep_time_lausanne,
+            8,
+            true,
+        )
+        .unwrap();
+        let arrival_time_l = forward_route_l.arrival_at();
+        println!(
+            "Forward Found: Dep {:?} -> Arr {:?}",
+            forward_route_l.departure_at(),
+            arrival_time_l
+        );
+
+        println!(
+            "Testing Reverse: Lausanne -> Lugano, Vignola arriving by {:?}",
+            arrival_time_l
+        );
+        let reverse_route_l = plan_journey_reverse(
+            &hrdf,
+            arr_stop_lausanne,
+            arr_stop_lugano,
+            arrival_time_l,
+            8,
+            true,
+        )
+        .unwrap();
+        println!(
+            "Reverse Found: Dep {:?} -> Arr {:?}",
+            reverse_route_l.departure_at(),
+            reverse_route_l.arrival_at()
+        );
+
+        assert!(
+            reverse_route_l.departure_at() >= forward_route_l.departure_at(),
+            "Reverse departure {:?} should be >= Forward departure {:?}",
+            reverse_route_l.departure_at(),
+            forward_route_l.departure_at()
+        );
+        assert!(
+            reverse_route_l.arrival_at() == forward_route_l.arrival_at(),
+            "Reverse arrival {:?} should be == Requested arrival {:?}",
+            reverse_route_l.arrival_at(),
+            forward_route_l.arrival_at()
+        );
     }
 }

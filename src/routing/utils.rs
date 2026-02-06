@@ -440,4 +440,65 @@ mod tests {
         let popped3 = queue.pop().unwrap();
         assert_eq!(popped3.arrival_at(), route_08_00.arrival_at());
     }
+
+    #[test]
+    fn test_route_queue_reverse_for_same_arrival_time() {
+        let mut queue = RouteQueueReverse::new();
+
+        // Push multiple routes with the same arrival time
+        let route1 = create_test_route("10:00", 1);
+        let route2 = create_test_route("10:00", 2);
+        let route3 = create_test_route("10:00", 3);
+
+        queue.push(route1.clone());
+        queue.push(route2.clone());
+        queue.push(route3.clone());
+
+        assert_eq!(queue.len(), 3);
+
+        // Routes with same arrival time should be popped in FIFO order (seq maintains order)
+        let popped1 = queue.pop().unwrap();
+        assert_eq!(popped1.arrival_stop_id(), route1.arrival_stop_id());
+
+        let popped2 = queue.pop().unwrap();
+        assert_eq!(popped2.arrival_stop_id(), route2.arrival_stop_id());
+
+        let popped3 = queue.pop().unwrap();
+        assert_eq!(popped3.arrival_stop_id(), route3.arrival_stop_id());
+
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn test_route_queue_reverse_priority_ordering() {
+        let mut queue = RouteQueueReverse::new();
+
+        // Push routes in non-sorted order
+        let route_15_00 = create_test_route("15:00", 1);
+        let route_10_00 = create_test_route("10:00", 2);
+        let route_12_30 = create_test_route("12:30", 3);
+        let route_08_00 = create_test_route("08:00", 4);
+
+        queue.push(route_15_00.clone());
+        queue.push(route_10_00.clone());
+        queue.push(route_12_30.clone());
+        queue.push(route_08_00.clone());
+
+        assert_eq!(queue.len(), 4);
+
+        // Pop routes - should come out in arrival time order (earliest first)
+        let popped1 = queue.pop().unwrap();
+        assert_eq!(popped1.arrival_at(), route_15_00.arrival_at());
+
+        let popped2 = queue.pop().unwrap();
+        assert_eq!(popped2.arrival_at(), route_12_30.arrival_at());
+
+        let popped3 = queue.pop().unwrap();
+        assert_eq!(popped3.arrival_at(), route_10_00.arrival_at());
+
+        let popped4 = queue.pop().unwrap();
+        assert_eq!(popped4.arrival_at(), route_08_00.arrival_at());
+
+        assert!(queue.is_empty());
+    }
 }

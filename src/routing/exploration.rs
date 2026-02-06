@@ -94,7 +94,7 @@ fn can_explore_connections(
     let stop = if let Some(stop) = stop {
         stop
     } else {
-        log::warn!("Stop: {} not found.", stop_id);
+        log::debug!("Stop: {} not found.", stop_id);
         return false;
     };
 
@@ -243,7 +243,7 @@ fn can_explore_connections_reverse(
     let stop = if let Some(stop) = stop {
         stop
     } else {
-        log::warn!("Stop: {} not found.", stop_id);
+        log::debug!("Stop: {} not found.", stop_id);
         return false;
     };
 

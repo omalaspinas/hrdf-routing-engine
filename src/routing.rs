@@ -83,6 +83,51 @@ pub fn plan_journey_reverse(
 /// Finds the route that takes the least time while arriving the earliest possioble.
 /// It basically moves from the departure stop to the arrival stop.
 /// The departure date and time must be within the timetable period.
+pub fn plan_shortest_journey_with_reverse(
+    hrdf: &Hrdf,
+    departure_stop_id: i32,
+    arrival_stop_id: i32,
+    departure_at: NaiveDateTime,
+    max_num_explorable_connections: i32,
+    verbose: bool,
+) -> Option<Route> {
+    let route = plan_journey(
+        hrdf,
+        departure_stop_id,
+        arrival_stop_id,
+        departure_at,
+        max_num_explorable_connections,
+        false,
+    )?;
+    let arrival_at = route.arrival_at();
+    println!("=======================================================");
+    println!(
+        "Dep: {departure_at:?}, Arr: {arrival_at:?}, dep_id: {departure_stop_id}, arr_id: {arrival_stop_id}"
+    );
+
+    let route = plan_journey_reverse(
+        hrdf,
+        departure_stop_id,
+        arrival_stop_id,
+        arrival_at,
+        max_num_explorable_connections,
+        false,
+    )?;
+    let departure_at = route.departure_at();
+    let arrival_at = route.arrival_at();
+    println!(
+        "Dep: {departure_at:?}, Arr: {arrival_at:?}, dep_id: {departure_stop_id}, arr_id: {arrival_stop_id}"
+    );
+    if verbose {
+        println!();
+        route.print(hrdf.data_storage());
+    }
+    Some(route)
+}
+
+/// Finds the route that takes the least time while arriving the earliest possioble.
+/// It basically moves from the departure stop to the arrival stop.
+/// The departure date and time must be within the timetable period.
 pub fn plan_shortest_journey(
     hrdf: &Hrdf,
     departure_stop_id: i32,

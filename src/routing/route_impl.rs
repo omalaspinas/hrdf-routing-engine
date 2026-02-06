@@ -157,78 +157,107 @@ impl Route {
                 // We want A -> B (physical step)
                 let physical_dep_stop = section.arrival_stop_id();
                 let physical_arr_stop = section.departure_stop_id();
-                
+
                 // Let's implement manual conversion for reverse sections to avoid hacky swapping.
                 // Or better, let's create a physical section.
                 // If section is walking: duration is set.
                 // If section is journey: use journey to get times.
-                
-                if section.is_walking_trip() {
-                     // Walking: direction is reversible.
-                     let arrival_at_dest = section.arrival_at() + chrono::Duration::minutes(section.duration().unwrap_or(0) as i64);
-                     // Wait, section.arrival_at is time at A (start of walk).
-                     // So time at B (end of walk) is A + duration.
-                     
-                     let dep_stop_obj = data_storage.stops().find(physical_dep_stop);
-                     let arr_stop_obj = data_storage.stops().find(physical_arr_stop);
 
-                     RouteSectionResult::new(
+                if section.is_walking_trip() {
+                    // Walking: direction is reversible.
+                    let arrival_at_dest = section.arrival_at()
+                        + chrono::Duration::minutes(section.duration().unwrap_or(0) as i64);
+                    // Wait, section.arrival_at is time at A (start of walk).
+                    // So time at B (end of walk) is A + duration.
+
+                    let dep_stop_obj = data_storage.stops().find(physical_dep_stop);
+                    let arr_stop_obj = data_storage.stops().find(physical_arr_stop);
+
+                    RouteSectionResult::new(
                         None,
                         physical_dep_stop,
-                        dep_stop_obj.map(|s| s.lv95_coordinates()).unwrap_or_default(),
-                        dep_stop_obj.map(|s| s.wgs84_coordinates()).unwrap_or_default(),
+                        dep_stop_obj
+                            .map(|s| s.lv95_coordinates())
+                            .unwrap_or_default(),
+                        dep_stop_obj
+                            .map(|s| s.wgs84_coordinates())
+                            .unwrap_or_default(),
                         physical_arr_stop,
-                        arr_stop_obj.map(|s| s.lv95_coordinates()).unwrap_or_default(),
-                        arr_stop_obj.map(|s| s.wgs84_coordinates()).unwrap_or_default(),
+                        arr_stop_obj
+                            .map(|s| s.lv95_coordinates())
+                            .unwrap_or_default(),
+                        arr_stop_obj
+                            .map(|s| s.wgs84_coordinates())
+                            .unwrap_or_default(),
                         Some(section.arrival_at()), // Dep at A
-                        Some(arrival_at_dest), // Arr at B
+                        Some(arrival_at_dest),      // Arr at B
                         section.duration(),
-                        Transport::Walk
-                     )
+                        Transport::Walk,
+                    )
                 } else {
                     // Journey
                     let journey = section.journey(data_storage).unwrap();
                     let dep_time = section.arrival_at(); // Time at A (physical dep)
-                    
+
                     // We need arrival time at B.
                     // We can ask the journey.
-                    let arr_time = journey.arrival_at_of_with_origin(
-                        physical_arr_stop,
-                        dep_time.date(),
-                        true, // dep_time is departure time.
-                        physical_dep_stop
-                    ).or_else(|_| {
-                        // Fallback: try next day if close to midnight? 
-                         journey.arrival_at_of_with_origin(
+                    let arr_time = journey
+                        .arrival_at_of_with_origin(
                             physical_arr_stop,
-                            dep_time.date().succ_opt().unwrap_or(dep_time.date()),
-                            true,
-                            physical_dep_stop
+                            dep_time.date(),
+                            true, // dep_time is departure time.
+                            physical_dep_stop,
                         )
-                    }).ok();
-                    
+                        .or_else(|_| {
+                            // Fallback: try next day if close to midnight?
+                            journey.arrival_at_of_with_origin(
+                                physical_arr_stop,
+                                dep_time.date().succ_opt().unwrap_or(dep_time.date()),
+                                true,
+                                physical_dep_stop,
+                            )
+                        })
+                        .ok();
+
                     let dep_stop_obj = data_storage.stops().find(physical_dep_stop);
                     let arr_stop_obj = data_storage.stops().find(physical_arr_stop);
 
                     RouteSectionResult::new(
                         section.journey_id(),
                         physical_dep_stop,
-                        dep_stop_obj.map(|s| s.lv95_coordinates()).unwrap_or_default(),
-                        dep_stop_obj.map(|s| s.wgs84_coordinates()).unwrap_or_default(),
+                        dep_stop_obj
+                            .map(|s| s.lv95_coordinates())
+                            .unwrap_or_default(),
+                        dep_stop_obj
+                            .map(|s| s.wgs84_coordinates())
+                            .unwrap_or_default(),
                         physical_arr_stop,
-                        arr_stop_obj.map(|s| s.lv95_coordinates()).unwrap_or_default(),
-                        arr_stop_obj.map(|s| s.wgs84_coordinates()).unwrap_or_default(),
+                        arr_stop_obj
+                            .map(|s| s.lv95_coordinates())
+                            .unwrap_or_default(),
+                        arr_stop_obj
+                            .map(|s| s.wgs84_coordinates())
+                            .unwrap_or_default(),
                         Some(dep_time),
                         arr_time.or(Some(dep_time)), // Fallback to avoid panic
                         section.duration(),
-                        journey.transport_type(data_storage).map(Transport::from).unwrap_or(Transport::Train)
+                        journey
+                            .transport_type(data_storage)
+                            .map(Transport::from)
+                            .unwrap_or(Transport::Train),
                     )
                 }
             })
             .collect();
 
-        let departure_at = sections.first().and_then(|s| s.departure_at()).unwrap_or_else(|| panic!("No departure time for route"));
-        let arrival_at = sections.last().and_then(|s| s.arrival_at()).unwrap_or_else(|| panic!("No arrival time for route"));
+        let departure_at = sections
+            .first()
+            .and_then(|s| s.departure_at())
+            .unwrap_or_else(|| panic!("No departure time for route"));
+        let arrival_at = sections
+            .last()
+            .and_then(|s| s.arrival_at())
+            .unwrap_or_else(|| panic!("No arrival time for route"));
 
         RouteResult::new(departure_at, arrival_at, sections)
     }
@@ -262,20 +291,18 @@ impl RouteSection {
             visited_stops.insert(stop.id());
 
             if stop.can_be_used_as_exchange_point()
-                || journey
-                    .is_first_stop(stop.id(), false)
-                    .unwrap_or(false)
+                || journey.is_first_stop(stop.id(), false).unwrap_or(false)
             {
                 // Found the start of the segment (physically).
                 // We need the departure time from this stop (which corresponds to "arrival at" in our reverse search logic).
                 // Actually, in reverse search:
                 // RouteSection.arrival_at = Time at the new frontier (Physical Departure Time at `stop`).
-                
+
                 let departure_at = journey.departure_at_of_with_origin(
                     stop.id(),
                     date,
                     is_arrival_date,
-                    arrival_stop_id
+                    arrival_stop_id,
                 );
 
                 if let Err(e) = departure_at {
@@ -324,9 +351,7 @@ impl RouteSection {
             visited_stops.insert(stop.id());
 
             if stop.can_be_used_as_exchange_point()
-                || journey
-                    .is_last_stop(stop.id(), false)
-                    .unwrap_or(false)
+                || journey.is_last_stop(stop.id(), false).unwrap_or(false)
             {
                 let arrival_at = journey.arrival_at_of_with_origin(
                     stop.id(),
