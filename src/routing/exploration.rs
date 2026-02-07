@@ -279,7 +279,11 @@ fn explore_connections_reverse(
     }
 }
 
-fn explore_nearby_stops_reverse(data_storage: &DataStorage, route: &Route, routes: &mut RouteQueueReverse) {
+fn explore_nearby_stops_reverse(
+    data_storage: &DataStorage,
+    route: &Route,
+    routes: &mut RouteQueueReverse,
+) {
     if route.last_section().journey_id().is_none() {
         return;
     }
