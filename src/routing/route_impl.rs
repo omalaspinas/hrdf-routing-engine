@@ -40,7 +40,13 @@ impl Route {
             is_departure_date,
         )
         .and_then(|(new_section, new_visited_stops)| {
-            if self.has_visited_any_stops(&new_visited_stops)
+            // When extending on the same journey, check intermediate stops for cycles
+            // to prevent a journey from looping back on itself.
+            // When transferring to a new journey, skip the cycle check — different journeys
+            // legitimately share stops, and the earliest_arrival_by_stop_id pruning already
+            // prevents redundant exploration at exchange points.
+            if is_same_journey
+                && self.has_visited_any_stops(&new_visited_stops)
                 && new_section.arrival_stop_id()
                     != journey
                         .first_stop_id()
@@ -102,10 +108,10 @@ impl Route {
 
         // Check if we are at the first stop of the journey (physically)
         // In reverse search, this means we cannot go further "back" on this journey.
-        if journey
+        let is_first = journey
             .is_first_stop(self.arrival_stop_id(), false)
-            .unwrap_or_else(|_| panic!("Unable to get first stop for {}", self.arrival_stop_id()))
-        {
+            .unwrap_or_else(|_| panic!("Unable to get first stop for {}", self.arrival_stop_id()));
+        if is_first {
             return None;
         }
 
@@ -119,7 +125,13 @@ impl Route {
             is_arrival_date,
         )
         .and_then(|(new_section, new_visited_stops)| {
-            if self.has_visited_any_stops(&new_visited_stops)
+            // When extending on the same journey, check intermediate stops for cycles
+            // to prevent a journey from looping back on itself.
+            // When transferring to a new journey, skip the cycle check — different journeys
+            // legitimately share stops, and the latest_arrival_by_stop_id pruning already
+            // prevents redundant exploration at exchange points.
+            if is_same_journey
+                && self.has_visited_any_stops(&new_visited_stops)
                 && new_section.arrival_stop_id()
                     != journey
                         .last_stop_id()
@@ -271,20 +283,19 @@ impl RouteSection {
         date: NaiveDate,
         is_arrival_date: bool,
     ) -> Option<(RouteSection, FxHashSet<i32>)> {
-        // Iterate backwards from the end of the journey to find our current stop
-        let mut route_iter = journey.route().iter().rev();
-
-        // Skip until we find our current location
-        for route_entry in route_iter.by_ref() {
-            if route_entry.stop_id() == arrival_stop_id {
-                break;
-            }
-        }
+        // Collect route entries before the FIRST occurrence of arrival_stop_id.
+        // Using forward iteration ensures we match the first occurrence, which is
+        // important for journeys that loop back through the same stop.
+        let before_stop: Vec<_> = journey
+            .route()
+            .iter()
+            .take_while(|entry| entry.stop_id() != arrival_stop_id)
+            .collect();
 
         let mut visited_stops = FxHashSet::default();
 
-        // Continue iterating backwards to find the previous stop (start of physical segment)
-        for route_entry in route_iter.by_ref() {
+        // Iterate backwards through entries before our stop to find the previous exchange point
+        for route_entry in before_stop.iter().rev() {
             let stop = route_entry
                 .stop(data_storage)
                 .unwrap_or_else(|_| panic!("Missing stop on route entry: {route_entry:?}"));
@@ -293,11 +304,6 @@ impl RouteSection {
             if stop.can_be_used_as_exchange_point()
                 || journey.is_first_stop(stop.id(), false).unwrap_or(false)
             {
-                // Found the start of the segment (physically).
-                // We need the departure time from this stop (which corresponds to "arrival at" in our reverse search logic).
-                // Actually, in reverse search:
-                // RouteSection.arrival_at = Time at the new frontier (Physical Departure Time at `stop`).
-
                 let departure_at = journey.departure_at_of_with_origin(
                     stop.id(),
                     date,

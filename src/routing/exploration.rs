@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use chrono::NaiveDateTime;
 use hrdf_parser::DataStorage;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -24,7 +22,6 @@ where
 {
     let mut new_routes = RouteQueue::new();
 
-    let mut visited_routes = HashSet::new();
     while let Some(route) = routes.pop() {
         if !can_continue_exploration(&route) {
             continue;
@@ -39,17 +36,6 @@ where
         explore_last_route_section_more_if_possible(data_storage, &route, &mut routes);
 
         if !can_explore_connections(data_storage, &route, earliest_arrival_by_stop_id) {
-            // In some cases there are stops appearing multiple times in a Journey
-            // for example see: *Z 011709 000801   in FPLAHN
-            // This can lead to an infinite loop. We will therefore check if the same route is explored
-            // a second time
-            if visited_routes.contains(&route) {
-                log::info!("Routes stayed the same: {}", routes.len());
-                visited_routes.remove(&route);
-                let _ = routes.pop();
-            } else {
-                visited_routes.insert(route.clone());
-            }
             continue;
         }
 
@@ -178,7 +164,6 @@ where
 {
     let mut new_routes = RouteQueueReverse::new();
 
-    let mut visited_routes = HashSet::new();
     while let Some(route) = routes.pop() {
         if !can_continue_exploration(&route) {
             continue;
@@ -191,16 +176,8 @@ where
         explore_last_route_section_more_if_possible_reverse(data_storage, &route, &mut routes);
 
         if !can_explore_connections_reverse(data_storage, &route, latest_arrival_by_stop_id) {
-            if visited_routes.contains(&route) {
-                // log::info!("Routes stayed the same: {}", routes.len());
-                visited_routes.remove(&route);
-                let _ = routes.pop();
-            } else {
-                visited_routes.insert(route.clone());
-            }
             continue;
         }
-
         explore_nearby_stops_reverse(data_storage, &route, &mut routes);
         explore_connections_reverse(data_storage, &route, journeys_to_ignore, &mut new_routes);
     }
@@ -247,19 +224,17 @@ fn can_explore_connections_reverse(
         return false;
     };
 
+    let arrival_at = route.arrival_at();
+
     if !stop.can_be_used_as_exchange_point() {
         return false;
     }
 
-    let arrival_at = route.arrival_at();
-
     if let Some(&latest_arrival) = latest_arrival_by_stop_id.get(&stop_id) {
         if arrival_at > latest_arrival {
-            // The route arrived LATER than the last route recorded for the stop (which is better for reverse search).
             latest_arrival_by_stop_id.insert(stop_id, arrival_at);
             true
         } else {
-            // Another route reached the stop later (better).
             false
         }
     } else {

@@ -30,7 +30,7 @@ mod tests {
         routing::{compute_routes_from_origin, plan_shortest_journey_with_reverse},
         utils::create_date_time,
     };
-    use chrono::{Duration, TimeDelta, Timelike};
+    use chrono::{Duration, NaiveDateTime, TimeDelta, Timelike};
     use hrdf_parser::Hrdf;
     use ojp_rs::{OJP, SimplifiedLeg, SimplifiedTrip};
 
@@ -522,142 +522,97 @@ mod tests {
         assert_eq!(original, loaded);
     }
 
-    #[test(tokio::test)]
-    async fn test_reverse_journey_consistency() {
-        let hrdf = Hrdf::try_from_year(2025, false, None).await.unwrap();
-
-        // // Case 1: Simple direct trip
-        // // Zürich HB (8503000) -> Bern (8507000)
-        // let dep_stop = 8503000;
-        // let arr_stop = 8507000;
-        // let dep_time = create_date_time(2025, 6, 15, 10, 0); // 10:00
-        //
-        // println!("Testing Forward: Zürich -> Bern @ 10:00");
-        // let forward_route = plan_journey(&hrdf, dep_stop, arr_stop, dep_time, 5, true).unwrap();
-        // let arrival_time = forward_route.arrival_at();
-        // println!(
-        //     "Forward Found: Dep {:?} -> Arr {:?}",
-        //     forward_route.departure_at(),
-        //     arrival_time
-        // );
-        //
-        // println!(
-        //     "Testing Reverse: Zürich -> Bern arriving by {:?}",
-        //     arrival_time
-        // );
-        // let reverse_route =
-        //     plan_journey_reverse(&hrdf, dep_stop, arr_stop, arrival_time, 5, true).unwrap();
-        // println!(
-        //     "Reverse Found: Dep {:?} -> Arr {:?}",
-        //     reverse_route.departure_at(),
-        //     reverse_route.arrival_at()
-        // );
-        //
-        // assert!(
-        //     reverse_route.departure_at() >= forward_route.departure_at(),
-        //     "Reverse departure {:?} should be >= Forward departure {:?}",
-        //     reverse_route.departure_at(),
-        //     forward_route.departure_at()
-        // );
-        // assert!(
-        //     reverse_route.arrival_at() == arrival_time,
-        //     "Reverse arrival {:?} should be == Requested arrival {:?}",
-        //     reverse_route.arrival_at(),
-        //     arrival_time
-        // );
-        //
-        // // Case 2: Trip with Transfer
-        // // Zürich HB (8503000) -> Zermatt (8501689)
-        // let arr_stop_zermatt = 8501689;
-        // println!("Testing Forward: Zürich -> Zermatt @ 08:00");
-        // let dep_time_zermatt = create_date_time(2025, 6, 15, 8, 0);
-        // let forward_route_z =
-        //     plan_journey(&hrdf, dep_stop, arr_stop_zermatt, dep_time_zermatt, 8, true).unwrap();
-        // let arrival_time_z = forward_route_z.arrival_at();
-        // println!(
-        //     "Forward Found: Dep {:?} -> Arr {:?}",
-        //     forward_route_z.departure_at(),
-        //     arrival_time_z
-        // );
-        //
-        // println!(
-        //     "Testing Reverse: Zürich -> Zermatt arriving by {:?}",
-        //     arrival_time_z
-        // );
-        // let reverse_route_z =
-        //     plan_journey_reverse(&hrdf, dep_stop, arr_stop_zermatt, arrival_time_z, 8, true)
-        //         .unwrap();
-        // println!(
-        //     "Reverse Found: Dep {:?} -> Arr {:?}",
-        //     reverse_route_z.departure_at(),
-        //     reverse_route_z.arrival_at()
-        // );
-        //
-        // assert!(
-        //     reverse_route_z.departure_at() >= forward_route_z.departure_at(),
-        //     "Reverse departure {:?} should be >= Forward departure {:?}",
-        //     reverse_route_z.departure_at(),
-        //     forward_route_z.departure_at()
-        // );
-        // assert!(
-        //     reverse_route_z.arrival_at() == forward_route_z.arrival_at(),
-        //     "Reverse arrival {:?} should be == Requested arrival {:?}",
-        //     reverse_route_z.arrival_at(),
-        //     forward_route_z.arrival_at()
-        // );
-
-        // Case 3: Trip with Transfer
-        // Lausanne (8501120) -> Lugano, Vignola (8579006)
-        let arr_stop_lausanne = 8501120;
-        let arr_stop_lugano = 8579006;
-        println!("Testing Forward: Lausanne -> Lugano, Vignola @ 05:40");
-        let dep_time_lausanne = create_date_time(2025, 11, 25, 5, 40);
-        let forward_route_l = plan_journey(
-            &hrdf,
-            arr_stop_lausanne,
-            arr_stop_lugano,
-            dep_time_lausanne,
-            8,
-            true,
-        )
-        .unwrap();
-        let arrival_time_l = forward_route_l.arrival_at();
+    fn consistency_check(
+        hrdf: &Hrdf,
+        date_time: NaiveDateTime,
+        dep_stop: i32,
+        arr_stop: i32,
+        num_connections: i32,
+    ) {
+        let forward_route = plan_journey(hrdf, dep_stop, arr_stop, date_time, 5, true).unwrap();
+        let arrival_time = forward_route.arrival_at();
         println!(
-            "Forward Found: Dep {:?} -> Arr {:?}",
-            forward_route_l.departure_at(),
-            arrival_time_l
+            "Forward Found {dep_stop} -> {arr_stop}: Dep {:?} -> Arr {:?}",
+            forward_route.departure_at(),
+            arrival_time
         );
 
         println!(
-            "Testing Reverse: Lausanne -> Lugano, Vignola arriving by {:?}",
-            arrival_time_l
+            "Testing Reverse {dep_stop} -> {arr_stop}: arriving by {:?}",
+            arrival_time
         );
-        let reverse_route_l = plan_journey_reverse(
-            &hrdf,
-            arr_stop_lausanne,
-            arr_stop_lugano,
-            arrival_time_l,
-            8,
+        let reverse_route = plan_journey_reverse(
+            hrdf,
+            dep_stop,
+            arr_stop,
+            arrival_time,
+            num_connections,
             true,
         )
         .unwrap();
         println!(
             "Reverse Found: Dep {:?} -> Arr {:?}",
-            reverse_route_l.departure_at(),
-            reverse_route_l.arrival_at()
+            reverse_route.departure_at(),
+            reverse_route.arrival_at()
         );
 
         assert!(
-            reverse_route_l.departure_at() >= forward_route_l.departure_at(),
+            reverse_route.departure_at() >= forward_route.departure_at(),
             "Reverse departure {:?} should be >= Forward departure {:?}",
-            reverse_route_l.departure_at(),
-            forward_route_l.departure_at()
+            reverse_route.departure_at(),
+            forward_route.departure_at()
         );
         assert!(
-            reverse_route_l.arrival_at() == forward_route_l.arrival_at(),
+            reverse_route.arrival_at() == arrival_time,
             "Reverse arrival {:?} should be == Requested arrival {:?}",
-            reverse_route_l.arrival_at(),
-            forward_route_l.arrival_at()
+            reverse_route.arrival_at(),
+            arrival_time
         );
+    }
+
+    #[test(tokio::test)]
+    async fn test_reverse_journey_consistency() {
+        let hrdf = Hrdf::try_from_year(2025, false, None).await.unwrap();
+
+        // Case 1: Simple direct trip
+        // Zürich HB (8503000) -> Bern (8507000)
+        let dep_stop = 8503000;
+        let arr_stop = 8507000;
+        let dep_time = create_date_time(2025, 6, 15, 10, 0); // 10:00
+        println!("Testing Forward: Zürich -> Bern @ 10:00");
+        consistency_check(&hrdf, dep_time, dep_stop, arr_stop, 10);
+
+        // Case 2: Trip with Transfer
+        // Zürich HB (8503000) -> Zermatt (8501689)
+        let arr_stop = 8501689;
+        println!("Testing Forward: Zürich -> Zermatt @ 08:00");
+        let dep_time = create_date_time(2025, 6, 15, 8, 0);
+        consistency_check(&hrdf, dep_time, dep_stop, arr_stop, 10);
+
+        // Case 3: Trip with Transfer
+        // Lausanne (8501120) -> Lugano, Vignola (8579006)
+        let dep_stop = 8501120;
+        let arr_stop = 8579006;
+        println!("Testing Forward: Lausanne -> Lugano, Vignola @ 05:40");
+        let dep_time = create_date_time(2025, 11, 25, 5, 40);
+        consistency_check(&hrdf, dep_time, dep_stop, arr_stop, 10);
+
+        // Case 4: Trip with Transfers
+        // Thun, Schönau (8591921) -> Fribourg, Beaumont (8589143)
+        // Trip from:  to:  departing at: 2025-11-24 15:15:00
+        let dep_stop = 8591921;
+        let arr_stop = 8589143;
+        println!("Testing Forward: Thun, Schönau -> Fribourg, Beaumont @ 15:15");
+        let dep_time = create_date_time(2025, 11, 24, 15, 15);
+        consistency_check(&hrdf, dep_time, dep_stop, arr_stop, 10);
+
+        // Case 5: Trip with Transfers
+        // Thun, Schönau (8591921) -> Fribourg, Beaumont (8589143)
+        // Trip from:  to:  departing at: 2025-11-24 15:15:00
+        let dep_stop = 8509076;
+        let arr_stop = 8587619;
+        println!("Testing Forward: Davos Glaris -> Biel/Bienne, Place Guisan @ 06:50");
+        let dep_time = create_date_time(2025, 11, 25, 6, 50);
+        consistency_check(&hrdf, dep_time, dep_stop, arr_stop, 10);
     }
 }

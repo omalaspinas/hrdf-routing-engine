@@ -47,10 +47,14 @@ pub fn get_connections_reverse(
         route.last_section().journey_id(),
     )
     .into_iter()
-    // A journey is removed if it has already been explored at a lower connection level.
     .filter(|(journey, _)| !journeys_to_ignore.contains(&journey.id()))
     .filter_map(|(journey, journey_arrival_at)| {
-        route.extend_reverse(data_storage, journey.id(), journey_arrival_at.date(), true)
+        route.extend_reverse(
+            data_storage,
+            journey.id(),
+            journey_arrival_at.date(),
+            false,
+        )
     })
     .collect()
 }
@@ -124,19 +128,13 @@ pub fn previous_departures(
     // Journeys are sorted by descending arrival time (LATEST arrival first).
     journeys.sort_by(|(_, a), (_, b)| b.cmp(a));
 
-    let mut routes_to_ignore = routes_to_ignore.unwrap_or_default();
+    let routes_to_ignore = routes_to_ignore.unwrap_or_default();
 
     journeys
         .into_iter()
         .filter(|(journey, _)| {
             let hash = journey.hash_route(arrival_stop_id).unwrap();
-
-            if !routes_to_ignore.contains(&hash) {
-                routes_to_ignore.insert(hash);
-                true
-            } else {
-                false
-            }
+            !routes_to_ignore.contains(&hash)
         })
         .filter(|&(journey, journey_arrival_at)| {
             // It is checked that there is enough time to embark on the journey (exchange time).
@@ -147,7 +145,8 @@ pub fn previous_departures(
                     .expect("Error: next journey not found");
 
                 // We check if the pair legagy_id is the same because it indicates
-                // that it is the same train continuing the journey
+                // that it is the same train continuing the journey although they are stored as
+                // separated journey in the hrdf format for an unknown reason
                 if !has_through_service(
                     data_storage,
                     arrival_at.date(),
@@ -164,7 +163,8 @@ pub fn previous_departures(
                         id,
                         journey_arrival_at,
                     );
-                    add_minutes_to_date_time(journey_arrival_at, exchange_time.into()) <= arrival_at
+                    add_minutes_to_date_time(journey_arrival_at, exchange_time.into())
+                        <= arrival_at
                 } else {
                     true
                 }
