@@ -170,6 +170,35 @@ pub fn adjust_departure_at(
     (adjusted_departure_at, adjusted_time_limit)
 }
 
+/// Adjusts the arrival time at a stop for reverse isochrone.
+/// The person walks from the arrival stop to the final destination, so they must arrive
+/// at the stop earlier to have time to walk.
+pub fn adjust_arrival_at(
+    arrival_at: NaiveDateTime,
+    time_limit: Duration,
+    destination_latitude: f64,
+    destination_longitude: f64,
+    arrival_stop: &Stop,
+) -> (NaiveDateTime, Duration) {
+    let distance = {
+        let coord = arrival_stop.wgs84_coordinates().unwrap();
+
+        haversine_distance(
+            destination_latitude,
+            destination_longitude,
+            coord.latitude().expect("Wrong coordinate system"),
+            coord.longitude().expect("Wrong coordinate system"),
+        ) * 1000.0
+    };
+
+    let walking_duration = distance_to_time(distance, WALKING_SPEED_IN_KILOMETERS_PER_HOUR);
+
+    let adjusted_arrival_at = arrival_at.checked_sub_signed(walking_duration).unwrap();
+    let adjusted_time_limit = time_limit - walking_duration;
+
+    (adjusted_arrival_at, adjusted_time_limit)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct NaiveDateTimeRange {
     from: NaiveDateTime,

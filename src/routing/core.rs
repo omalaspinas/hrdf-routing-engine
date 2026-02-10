@@ -52,6 +52,7 @@ pub fn compute_routing(
                     )
                 })
             }
+            _ => panic!("Unsupported mode for forward routing"),
         };
 
         let new_routes = explore_routes(
@@ -302,18 +303,29 @@ pub fn compute_routing_reverse(
             log::info!("For connection {i}, routes length: {}", routes.len());
         }
 
-        // We assume point-to-point reverse routing for now.
-        // args.arrival_stop_id() contains the TARGET ORIGIN (Departure Stop) ID.
-        let target_origin_id = args.arrival_stop_id();
-
-        let can_continue_exploration: Box<dyn FnMut(&Route) -> bool> = Box::new(|route| {
-            can_continue_exploration_one_to_one_reverse(
-                data_storage,
-                route,
-                &mut solutions,
-                target_origin_id,
-            )
-        });
+        let can_continue_exploration: Box<dyn FnMut(&Route) -> bool> = match args.mode() {
+            RoutingAlgorithmMode::SolveFromDepartureStopToArrivalStop => {
+                Box::new(|route| {
+                    can_continue_exploration_one_to_one_reverse(
+                        data_storage,
+                        route,
+                        &mut solutions,
+                        args.arrival_stop_id(),
+                    )
+                })
+            }
+            RoutingAlgorithmMode::SolveFromArrivalStopToReachableDepartureStops => {
+                Box::new(|route| {
+                    can_continue_exploration_one_to_many_reverse(
+                        data_storage,
+                        route,
+                        &mut solutions,
+                        args.time_limit(),
+                    )
+                })
+            }
+            _ => panic!("Unsupported mode for reverse routing"),
+        };
 
         let new_routes = explore_routes_reverse(
             data_storage,
@@ -405,6 +417,60 @@ fn can_continue_exploration_one_to_one_reverse(
     }
 
     false
+}
+
+fn can_continue_exploration_one_to_many_reverse(
+    data_storage: &DataStorage,
+    route: &Route,
+    solutions: &mut FxHashMap<i32, Route>,
+    time_limit: NaiveDateTime,
+) -> bool {
+    fn evaluate_candidate_reverse(
+        data_storage: &DataStorage,
+        candidate: Route,
+        solutions: &mut FxHashMap<i32, Route>,
+        time_limit: NaiveDateTime,
+    ) {
+        // In reverse, route.arrival_at() is the physical departure time.
+        // A candidate is valid if its departure time >= earliest allowable.
+        if candidate.arrival_at() < time_limit {
+            return;
+        }
+
+        let origin_stop_id = candidate.arrival_stop_id();
+        let solution = solutions.get(&origin_stop_id);
+
+        if is_improving_solution_reverse(data_storage, &candidate, &solution) {
+            solutions.insert(origin_stop_id, candidate);
+        }
+    }
+
+    // Evaluate the frontier stop (arrival_stop_id = physical departure) as a candidate.
+    evaluate_candidate_reverse(data_storage, route.clone(), solutions, time_limit);
+
+    if route.last_section().journey_id().is_some() {
+        let last_section = route.last_section();
+        let journey = last_section.journey(data_storage).unwrap();
+        let departure_stop_id = last_section.departure_stop_id();
+
+        // route_section(A, B) excludes A, includes B.
+        // A = arrival_stop_id (physical departure, frontier) — already evaluated above.
+        // B = departure_stop_id (physical arrival) — must be excluded because:
+        //   1. It's the alighting stop, not a valid boarding origin.
+        //   2. If it's the last stop of the journey, departure_time_of() will fail.
+        for route_entry in journey
+            .route_section(last_section.arrival_stop_id(), departure_stop_id)
+            .into_iter()
+            .filter(|e| e.stop_id() != departure_stop_id)
+        {
+            let candidate =
+                update_departure_stop_reverse(data_storage, route.clone(), route_entry.stop_id());
+            evaluate_candidate_reverse(data_storage, candidate, solutions, time_limit);
+        }
+    }
+
+    // Continue exploring as long as the physical departure is later than the earliest allowable.
+    route.arrival_at() > time_limit
 }
 
 fn update_departure_stop_reverse(

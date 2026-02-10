@@ -156,6 +156,7 @@ impl Route {
 pub enum RoutingAlgorithmMode {
     SolveFromDepartureStopToArrivalStop,
     SolveFromDepartureStopToReachableArrivalStops,
+    SolveFromArrivalStopToReachableDepartureStops,
 }
 
 pub struct RoutingAlgorithmArgs {
@@ -188,6 +189,16 @@ impl RoutingAlgorithmArgs {
     pub fn solve_from_departure_stop_to_reachable_arrival_stops(time_limit: NaiveDateTime) -> Self {
         Self::new(
             RoutingAlgorithmMode::SolveFromDepartureStopToReachableArrivalStops,
+            None,
+            Some(time_limit),
+        )
+    }
+
+    pub fn solve_from_arrival_stop_to_reachable_departure_stops(
+        time_limit: NaiveDateTime,
+    ) -> Self {
+        Self::new(
+            RoutingAlgorithmMode::SolveFromArrivalStopToReachableDepartureStops,
             None,
             Some(time_limit),
         )
@@ -385,6 +396,10 @@ impl RouteSectionResult {
 
     pub fn arrival_stop_id(&self) -> i32 {
         self.arrival_stop_id
+    }
+
+    pub fn departure_stop_lv95_coordinates(&self) -> Option<Coordinates> {
+        self.departure_stop_lv95_coordinates
     }
 
     pub fn arrival_stop_lv95_coordinates(&self) -> Option<Coordinates> {

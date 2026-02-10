@@ -9,11 +9,14 @@ mod utils;
 
 #[cfg(feature = "hectare")]
 pub use app::run_surface_per_ha;
-pub use app::{run_average, run_comparison, run_optimal, run_simple, run_worst};
+pub use app::{
+    run_average, run_average_reverse, run_comparison, run_optimal, run_optimal_reverse,
+    run_simple, run_simple_reverse, run_worst,
+};
 pub use debug::run_debug;
 pub use error::RResult;
 pub use isochrone::externals::{ExcludedPolygons, LAKES_GEOJSON_URLS};
-pub use isochrone::{IsochroneArgs, IsochroneDisplayMode};
+pub use isochrone::{IsochroneArgs, IsochroneDisplayMode, ReverseIsochroneArgs};
 #[cfg(feature = "hectare")]
 pub use isochrone::{IsochroneHectareArgs, externals::HectareData};
 pub use journey::{JourneyArgs, ReverseJourneyArgs};
@@ -27,7 +30,10 @@ mod tests {
     use crate::{
         ExcludedPolygons, HectareData, LAKES_GEOJSON_URLS,
         isochrone::unique_coordinates_from_routes,
-        routing::{compute_routes_from_origin, plan_shortest_journey_with_reverse},
+        routing::{
+            compute_routes_from_origin, find_origin_stops_within_time_limit,
+            find_reachable_stops_within_time_limit, plan_shortest_journey_with_reverse,
+        },
         utils::create_date_time,
     };
     use chrono::{Duration, NaiveDateTime, TimeDelta, Timelike};
@@ -614,5 +620,140 @@ mod tests {
         println!("Testing Forward: Davos Glaris -> Biel/Bienne, Place Guisan @ 06:50");
         let dep_time = create_date_time(2025, 11, 25, 6, 50);
         consistency_check(&hrdf, dep_time, dep_stop, arr_stop, 10);
+    }
+
+    /// Verifies that a forward isochrone from dep_stop contains arr_stop
+    /// when given enough time to cover the known journey.
+    fn forward_isochrone_contains_journey_destination(
+        hrdf: &Hrdf,
+        dep_stop: i32,
+        arr_stop: i32,
+        departure_at: NaiveDateTime,
+    ) {
+        let route = plan_journey(hrdf, dep_stop, arr_stop, departure_at, 10, false)
+            .unwrap_or_else(|| panic!("Forward journey {dep_stop} -> {arr_stop} should exist"));
+        let travel_time = route.arrival_at() - departure_at;
+
+        eprintln!(
+            "Forward isochrone check: {dep_stop} -> {arr_stop}, travel_time = {} min",
+            travel_time.num_minutes()
+        );
+
+        let reachable = find_reachable_stops_within_time_limit(
+            hrdf,
+            dep_stop,
+            departure_at,
+            travel_time,
+            10,
+            false,
+        );
+
+        let reachable_stop_ids: std::collections::HashSet<i32> = reachable
+            .iter()
+            .filter_map(|r| r.arrival_stop_id())
+            .collect();
+
+        assert!(
+            reachable_stop_ids.contains(&arr_stop),
+            "Forward isochrone from {dep_stop} (limit {} min) should contain {arr_stop}. Found {} reachable stops.",
+            travel_time.num_minutes(),
+            reachable_stop_ids.len(),
+        );
+    }
+
+    /// Verifies that a reverse isochrone to arr_stop contains dep_stop
+    /// when given enough time to cover the known reverse journey.
+    fn reverse_isochrone_contains_journey_origin(
+        hrdf: &Hrdf,
+        dep_stop: i32,
+        arr_stop: i32,
+        arrival_at: NaiveDateTime,
+    ) {
+        let route = plan_journey_reverse(hrdf, dep_stop, arr_stop, arrival_at, 10, false)
+            .unwrap_or_else(|| panic!("Reverse journey {dep_stop} -> {arr_stop} should exist"));
+        let travel_time = arrival_at - route.departure_at();
+
+        eprintln!(
+            "Reverse isochrone check: {dep_stop} -> {arr_stop}, travel_time = {} min",
+            travel_time.num_minutes()
+        );
+
+        let origins = find_origin_stops_within_time_limit(
+            hrdf,
+            arr_stop,
+            arrival_at,
+            travel_time,
+            10,
+            false,
+        );
+
+        let origin_stop_ids: std::collections::HashSet<i32> = origins
+            .iter()
+            .filter_map(|r| r.departure_stop_id())
+            .collect();
+
+        assert!(
+            origin_stop_ids.contains(&dep_stop),
+            "Reverse isochrone to {arr_stop} (limit {} min) should contain {dep_stop}. Found {} origin stops.",
+            travel_time.num_minutes(),
+            origin_stop_ids.len(),
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn test_forward_isochrone_contains_known_destinations() {
+        let hrdf = Hrdf::try_from_year(2025, false, None).await.unwrap();
+
+        // Case 1: Zürich HB -> Bern (direct)
+        eprintln!("Case 1: Zürich HB -> Bern");
+        forward_isochrone_contains_journey_destination(
+            &hrdf,
+            8503000,
+            8507000,
+            create_date_time(2025, 6, 15, 10, 0),
+        );
+
+        // Case 2: Zürich HB -> Zermatt (with transfer)
+        eprintln!("Case 2: Zürich HB -> Zermatt");
+        forward_isochrone_contains_journey_destination(
+            &hrdf,
+            8503000,
+            8501689,
+            create_date_time(2025, 6, 15, 8, 0),
+        );
+
+        // Case 3: Lausanne -> Lugano, Vignola (with transfers)
+        eprintln!("Case 3: Lausanne -> Lugano, Vignola");
+        forward_isochrone_contains_journey_destination(
+            &hrdf,
+            8501120,
+            8579006,
+            create_date_time(2025, 11, 25, 5, 40),
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn test_reverse_isochrone_contains_known_origins() {
+        let hrdf = Hrdf::try_from_year(2025, false, None).await.unwrap();
+
+        // For reverse, we first find the forward arrival time, then use it as the reverse target.
+
+        // Case 1: Zürich HB -> Bern (direct)
+        eprintln!("Case 1: Reverse to Bern");
+        let departure_at = create_date_time(2025, 6, 15, 10, 0);
+        let forward = plan_journey(&hrdf, 8503000, 8507000, departure_at, 10, false).unwrap();
+        reverse_isochrone_contains_journey_origin(&hrdf, 8503000, 8507000, forward.arrival_at());
+
+        // Case 2: Zürich HB -> Zermatt (with transfer)
+        eprintln!("Case 2: Reverse to Zermatt");
+        let departure_at = create_date_time(2025, 6, 15, 8, 0);
+        let forward = plan_journey(&hrdf, 8503000, 8501689, departure_at, 10, false).unwrap();
+        reverse_isochrone_contains_journey_origin(&hrdf, 8503000, 8501689, forward.arrival_at());
+
+        // Case 3: Lausanne -> Lugano, Vignola (with transfers)
+        eprintln!("Case 3: Reverse to Lugano, Vignola");
+        let departure_at = create_date_time(2025, 11, 25, 5, 40);
+        let forward = plan_journey(&hrdf, 8501120, 8579006, departure_at, 10, false).unwrap();
+        reverse_isochrone_contains_journey_origin(&hrdf, 8501120, 8579006, forward.arrival_at());
     }
 }

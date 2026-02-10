@@ -6,6 +6,7 @@ mod models;
 mod route_impl;
 mod utils;
 
+use crate::isochrone::utils::adjust_arrival_at;
 use crate::isochrone::utils::adjust_departure_at;
 use crate::isochrone::utils::wgs84_to_lv95;
 use crate::routing::models::Transport;
@@ -326,6 +327,162 @@ pub fn compute_routes_from_origin(
             Some(Coordinates::default()),
             0,
             Some(Coordinates::new(CoordinateSystem::LV95, easting, northing)),
+            Some(Coordinates::default()),
+            Some(NaiveDateTime::default()),
+            Some(NaiveDateTime::default()),
+            Some(0),
+            Transport::Unknown,
+        )],
+    );
+    routes.push(route);
+    routes
+}
+
+/// Finds all origin stops from which the arrival stop can be reached within a time limit.
+/// The arrival date and time must be within the timetable period.
+#[allow(dead_code)]
+pub fn find_origin_stops_within_time_limit(
+    hrdf: &Hrdf,
+    arrival_stop_id: i32,
+    arrival_at: NaiveDateTime,
+    time_limit: Duration,
+    max_num_explorable_connections: i32,
+    verbose: bool,
+) -> Vec<Route> {
+    let routes = compute_routing_reverse(
+        hrdf.data_storage(),
+        arrival_stop_id,
+        arrival_at,
+        max_num_explorable_connections,
+        verbose,
+        RoutingAlgorithmArgs::solve_from_arrival_stop_to_reachable_departure_stops(
+            arrival_at.checked_sub_signed(time_limit).unwrap(),
+        ),
+    );
+    routes.into_values().collect()
+}
+
+// Find stops in walking range of the destination. Sorted by remaining time (descending).
+fn find_stops_in_time_range_reverse(
+    data_storage: &DataStorage,
+    destination_latitude: f64,
+    destination_longitude: f64,
+    arrival_at: NaiveDateTime,
+    time_limit: Duration,
+) -> Vec<&Stop> {
+    let mut stops = data_storage
+        .stops()
+        .entries()
+        .into_iter()
+        .filter(|stop| stop.wgs84_coordinates().is_some())
+        .filter(|stop| {
+            adjust_arrival_at(
+                arrival_at,
+                time_limit,
+                destination_latitude,
+                destination_longitude,
+                stop,
+            )
+            .1
+            .num_minutes()
+                > 0
+        })
+        .collect::<Vec<_>>();
+    stops.sort_by(|lhs, rhs| {
+        adjust_arrival_at(
+            arrival_at,
+            time_limit,
+            destination_latitude,
+            destination_longitude,
+            rhs,
+        )
+        .1
+        .num_minutes()
+        .cmp(
+            &adjust_arrival_at(
+                arrival_at,
+                time_limit,
+                destination_latitude,
+                destination_longitude,
+                lhs,
+            )
+            .1
+            .num_minutes(),
+        )
+    });
+    stops
+}
+
+/// Given a destination point (lat/lon) and arrival time, find all origin stops
+/// from which the destination can be reached within the time limit.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_routes_to_destination(
+    hrdf: &Hrdf,
+    destination_latitude: f64,
+    destination_longitude: f64,
+    arrival_at: NaiveDateTime,
+    time_limit: Duration,
+    num_starting_points: usize,
+    num_threads: usize,
+    max_num_explorable_connections: i32,
+    verbose: bool,
+) -> Vec<Route> {
+    let arrival_stops = find_stops_in_time_range_reverse(
+        hrdf.data_storage(),
+        destination_latitude,
+        destination_longitude,
+        arrival_at,
+        time_limit,
+    )
+    .into_iter()
+    .take(num_starting_points)
+    .collect::<Vec<_>>();
+
+    let mut routes = arrival_stops
+        .par()
+        .num_threads(num_threads)
+        .flat_map(|arrival_stop| {
+            let (adjusted_arrival_at, adjusted_time_limit) = adjust_arrival_at(
+                arrival_at,
+                time_limit,
+                destination_latitude,
+                destination_longitude,
+                arrival_stop,
+            );
+            if verbose {
+                log::info!(
+                    "Arrival stop : {:?}, Adjusted arrival at : {:?}, Adjusted time limit : {:?}",
+                    arrival_stop,
+                    adjusted_arrival_at,
+                    adjusted_time_limit
+                );
+            }
+
+            let local_routes: Vec<_> = find_origin_stops_within_time_limit(
+                hrdf,
+                arrival_stop.id(),
+                adjusted_arrival_at,
+                adjusted_time_limit,
+                max_num_explorable_connections,
+                verbose,
+            );
+
+            local_routes
+        })
+        .collect::<Vec<_>>();
+
+    // A synthetic route representing the destination point itself.
+    let (easting, northing) = wgs84_to_lv95(destination_latitude, destination_longitude);
+    let route = Route::new(
+        arrival_at,
+        NaiveDateTime::default(),
+        vec![RouteSection::new(
+            None,
+            0,
+            Some(Coordinates::new(CoordinateSystem::LV95, easting, northing)),
+            Some(Coordinates::default()),
+            0,
+            Some(Coordinates::default()),
             Some(Coordinates::default()),
             Some(NaiveDateTime::default()),
             Some(NaiveDateTime::default()),

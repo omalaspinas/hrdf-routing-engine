@@ -9,8 +9,9 @@ use clap::{Parser, Subcommand};
 use hrdf_parser::Hrdf;
 use hrdf_routing_engine::{
     ExcludedPolygons, IsochroneArgs, IsochroneDisplayMode, JourneyArgs, LAKES_GEOJSON_URLS,
-    RResult, ReverseJourneyArgs, plan_journey, plan_journey_reverse, run_average, run_comparison,
-    run_debug, run_optimal, run_service, run_simple, run_worst,
+    RResult, ReverseIsochroneArgs, ReverseJourneyArgs, plan_journey, plan_journey_reverse,
+    run_average, run_average_reverse, run_comparison, run_debug, run_optimal, run_optimal_reverse,
+    run_service, run_simple, run_simple_reverse, run_worst,
 };
 #[cfg(feature = "hectare")]
 use hrdf_routing_engine::{HectareData, IsochroneHectareArgs, run_surface_per_ha};
@@ -66,6 +67,60 @@ impl IsochroneArgsBuilder {
             latitude,
             longitude,
             departure_at: NaiveDateTime::parse_from_str(&departure_at, "%Y-%m-%d %H:%M:%S")?,
+            time_limit: Duration::minutes(time_limit),
+            interval: Duration::minutes(interval),
+            max_num_explorable_connections,
+            num_starting_points,
+            verbose,
+        })
+    }
+}
+
+#[derive(Parser, Debug, Clone)]
+struct ReverseIsochroneArgsBuilder {
+    /// Destination latitude
+    #[arg(long, default_value_t = 46.20956654)]
+    latitude: f64,
+    /// Destination longitude
+    #[arg(long, default_value_t = 6.13536000)]
+    longitude: f64,
+    /// Arrival date and time
+    #[arg(short, long, default_value_t = String::from("2025-04-10 15:36:00"))]
+    arrival_at: String,
+    /// Maximum time of the isochrone in minutes
+    #[arg(short, long, default_value_t = 60)]
+    time_limit: i64,
+    /// Time interval between two isochrone in minutes
+    #[arg(short, long, default_value_t = 10)]
+    interval: i64,
+    /// Maximum number of connections
+    #[arg(short, long, default_value_t = 10)]
+    max_num_explorable_connections: i32,
+    /// Number of starting points
+    #[arg(short, long, default_value_t = 5)]
+    num_starting_points: usize,
+    /// Verbose on or off
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
+}
+
+impl ReverseIsochroneArgsBuilder {
+    pub(crate) fn finalize(self) -> RResult<ReverseIsochroneArgs> {
+        let Self {
+            latitude,
+            longitude,
+            arrival_at,
+            time_limit,
+            interval,
+            max_num_explorable_connections,
+            num_starting_points,
+            verbose,
+        } = self;
+
+        Ok(ReverseIsochroneArgs {
+            latitude,
+            longitude,
+            arrival_at: NaiveDateTime::parse_from_str(&arrival_at, "%Y-%m-%d %H:%M:%S")?,
             time_limit: Duration::minutes(time_limit),
             interval: Duration::minutes(interval),
             max_num_explorable_connections,
@@ -266,6 +321,33 @@ enum Mode {
     Average {
         #[command(flatten)]
         isochrone_args: IsochroneArgsBuilder,
+        /// The +/- duration on which to compute the average (in minutes)
+        #[arg(long, default_value_t = 30)]
+        delta_time: i64,
+    },
+    /// Reverse isochrone: find all origins from which a destination can be reached
+    ReverseSimple {
+        #[command(flatten)]
+        isochrone_args: ReverseIsochroneArgsBuilder,
+        /// Display mode of the isochrones: circles or contour_line
+        #[arg(long, default_value_t = IsochroneDisplayMode::Circles)]
+        mode: IsochroneDisplayMode,
+    },
+    /// Reverse optimal isochrone (largest surface)
+    ReverseOptimal {
+        #[command(flatten)]
+        isochrone_args: ReverseIsochroneArgsBuilder,
+        /// The +/- duration on which to compute the optimal (in minutes)
+        #[arg(long, default_value_t = 30)]
+        delta_time: i64,
+        /// Display mode of the isochrones: circles or contour_line
+        #[arg(long, default_value_t = IsochroneDisplayMode::Circles)]
+        mode: IsochroneDisplayMode,
+    },
+    /// Reverse average isochrone
+    ReverseAverage {
+        #[command(flatten)]
+        isochrone_args: ReverseIsochroneArgsBuilder,
         /// The +/- duration on which to compute the average (in minutes)
         #[arg(long, default_value_t = 30)]
         delta_time: i64,
@@ -492,6 +574,66 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 args_new,
                 Duration::minutes(delta_time),
                 mode,
+                cli.num_threads,
+            )?;
+        }
+
+        Mode::ReverseSimple {
+            isochrone_args,
+            mode,
+        } => {
+            let isochrone_args = isochrone_args.finalize()?;
+            let hrdf = Hrdf::try_from_date(
+                isochrone_args.arrival_at.date(),
+                cli.force_rebuild,
+                cli.cache_prefix.clone(),
+            )
+            .await?;
+            run_simple_reverse(
+                hrdf,
+                excluded_polygons,
+                isochrone_args,
+                mode,
+                cli.num_threads,
+            )?;
+        }
+        Mode::ReverseOptimal {
+            isochrone_args,
+            delta_time,
+            mode,
+        } => {
+            let isochrone_args = isochrone_args.finalize()?;
+            let hrdf = Hrdf::try_from_date(
+                isochrone_args.arrival_at.date(),
+                cli.force_rebuild,
+                cli.cache_prefix.clone(),
+            )
+            .await?;
+            run_optimal_reverse(
+                hrdf,
+                excluded_polygons,
+                isochrone_args,
+                Duration::minutes(delta_time),
+                mode,
+                cli.num_threads,
+            )?;
+        }
+        Mode::ReverseAverage {
+            isochrone_args,
+            delta_time,
+        } => {
+            let isochrone_args = isochrone_args.finalize()?;
+            let hrdf = Hrdf::try_from_date(
+                isochrone_args.arrival_at.date(),
+                cli.force_rebuild,
+                cli.cache_prefix.clone(),
+            )
+            .await?;
+            run_average_reverse(
+                hrdf,
+                excluded_polygons,
+                isochrone_args,
+                Duration::minutes(delta_time),
                 cli.num_threads,
             )?;
         }
