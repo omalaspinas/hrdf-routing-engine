@@ -1,4 +1,5 @@
 mod app;
+mod cli;
 mod debug;
 mod error;
 mod isochrone;
@@ -10,13 +11,16 @@ mod utils;
 #[cfg(feature = "hectare")]
 pub use app::run_surface_per_ha;
 pub use app::{
-    run_average, run_average_reverse, run_comparison, run_optimal, run_optimal_reverse,
-    run_simple, run_simple_reverse, run_worst,
+    run_average, run_average_reverse, run_comparison, run_optimal, run_optimal_reverse, run_simple,
+    run_simple_reverse, run_worst,
 };
+pub use cli::{Cli, Mode};
 pub use debug::run_debug;
 pub use error::RResult;
 pub use isochrone::externals::{ExcludedPolygons, LAKES_GEOJSON_URLS};
-pub use isochrone::{IsochroneArgs, IsochroneDisplayMode, ReverseIsochroneArgs};
+pub use isochrone::{
+    IsochroneArgs, IsochroneDisplayMode, ReverseIsochroneArgs, compute_isochrones,
+};
 #[cfg(feature = "hectare")]
 pub use isochrone::{IsochroneHectareArgs, externals::HectareData};
 pub use journey::{JourneyArgs, ReverseJourneyArgs};
@@ -678,14 +682,8 @@ mod tests {
             travel_time.num_minutes()
         );
 
-        let origins = find_origin_stops_within_time_limit(
-            hrdf,
-            arr_stop,
-            arrival_at,
-            travel_time,
-            10,
-            false,
-        );
+        let origins =
+            find_origin_stops_within_time_limit(hrdf, arr_stop, arrival_at, travel_time, 10, false);
 
         let origin_stop_ids: std::collections::HashSet<i32> = origins
             .iter()
