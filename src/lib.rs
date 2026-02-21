@@ -20,6 +20,7 @@ pub use error::RResult;
 pub use isochrone::externals::{ExcludedPolygons, LAKES_GEOJSON_URLS};
 pub use isochrone::{
     IsochroneArgs, IsochroneDisplayMode, ReverseIsochroneArgs, compute_isochrones,
+    compute_isochrones_reverse, compute_optimal_isochrones_reverse,
 };
 #[cfg(feature = "hectare")]
 pub use isochrone::{IsochroneHectareArgs, externals::HectareData};
