@@ -17,6 +17,7 @@ pub fn explore_routes<F>(
     mut routes: RouteQueue,
     journeys_to_ignore: &mut FxHashSet<i32>,
     earliest_arrival_by_stop_id: &mut FxHashMap<i32, NaiveDateTime>,
+    hash_route_cache: &mut FxHashMap<(i32, i32), Option<u64>>,
     mut can_continue_exploration: F,
 ) -> RouteQueue
 where
@@ -54,7 +55,13 @@ where
         }
 
         explore_nearby_stops(data_storage, &route, &mut routes);
-        explore_connections(data_storage, &route, journeys_to_ignore, &mut new_routes);
+        explore_connections(
+            data_storage,
+            &route,
+            journeys_to_ignore,
+            hash_route_cache,
+            &mut new_routes,
+        );
     }
 
     // All new journeys are recorded as not available for the next connection level.
@@ -129,9 +136,10 @@ fn explore_connections(
     data_storage: &DataStorage,
     route: &Route,
     journeys_to_ignore: &FxHashSet<i32>,
+    hash_route_cache: &mut FxHashMap<(i32, i32), Option<u64>>,
     new_routes: &mut RouteQueue,
 ) {
-    for route in get_connections(data_storage, route, journeys_to_ignore) {
+    for route in get_connections(data_storage, route, journeys_to_ignore, hash_route_cache) {
         new_routes.push(route);
     }
 }

@@ -19,7 +19,13 @@ pub fn compute_routing(
     verbose: bool,
     args: RoutingAlgorithmArgs,
 ) -> FxHashMap<i32, RouteResult> {
-    let mut routes = create_initial_routes(data_storage, departure_stop_id, departure_at);
+    let mut hash_route_cache = FxHashMap::default();
+    let mut routes = create_initial_routes(
+        data_storage,
+        departure_stop_id,
+        departure_at,
+        &mut hash_route_cache,
+    );
     let mut earliest_arrival_by_stop_id = FxHashMap::default();
     let mut solutions = FxHashMap::default();
 
@@ -59,6 +65,7 @@ pub fn compute_routing(
             routes,
             &mut journeys_to_ignore,
             &mut earliest_arrival_by_stop_id,
+            &mut hash_route_cache,
             can_continue_exploration,
         );
 
@@ -79,12 +86,18 @@ pub fn create_initial_routes(
     data_storage: &DataStorage,
     departure_stop_id: i32,
     departure_at: NaiveDateTime,
+    hash_route_cache: &mut FxHashMap<(i32, i32), Option<u64>>,
 ) -> RouteQueue {
     let mut routes = RouteQueue::new();
 
-    for (journey, journey_departure_at) in
-        next_departures(data_storage, departure_stop_id, departure_at, None, None)
-    {
+    for (journey, journey_departure_at) in next_departures(
+        data_storage,
+        departure_stop_id,
+        departure_at,
+        None,
+        None,
+        hash_route_cache,
+    ) {
         if let Some((section, mut visited_stops)) = RouteSection::find_next(
             data_storage,
             journey,

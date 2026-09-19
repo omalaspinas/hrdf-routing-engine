@@ -1,6 +1,6 @@
 use chrono::{Duration, NaiveDate, NaiveDateTime};
 use hrdf_parser::{DataStorage, Journey, Model, TransportType, timetable_end_date};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::utils::{
     add_1_day, add_minutes_to_date_time, count_days_between_two_dates, create_time,
@@ -12,13 +12,15 @@ pub fn get_connections(
     data_storage: &DataStorage,
     route: &Route,
     journeys_to_ignore: &FxHashSet<i32>,
+    hash_route_cache: &mut FxHashMap<(i32, i32), Option<u64>>,
 ) -> Vec<Route> {
     next_departures(
         data_storage,
         route.arrival_stop_id(),
         route.arrival_at(),
-        Some(get_routes_to_ignore(data_storage, route)),
+        Some(get_routes_to_ignore(data_storage, route, hash_route_cache)),
         route.last_section().journey_id(),
+        hash_route_cache,
     )
     .into_iter()
     // A journey is removed if it has already been explored at a lower connection level.
@@ -34,13 +36,14 @@ pub fn get_connections(
     .collect()
 }
 
-pub fn next_departures(
-    data_storage: &DataStorage,
+pub fn next_departures<'a>(
+    data_storage: &'a DataStorage,
     departure_stop_id: i32,
     departure_at: NaiveDateTime,
     routes_to_ignore: Option<FxHashSet<u64>>,
     previous_journey_id: Option<i32>,
-) -> Vec<(&Journey, NaiveDateTime)> {
+    hash_route_cache: &mut FxHashMap<(i32, i32), Option<u64>>,
+) -> Vec<(&'a Journey, NaiveDateTime)> {
     fn get_journeys(
         data_storage: &DataStorage,
         date: NaiveDate,
@@ -50,18 +53,16 @@ pub fn next_departures(
 
         let journeys = get_operating_journeys(data_storage, date, stop_id)
             .into_iter()
-            .filter(|journey| {
-                !journey.is_last_stop(stop_id, true).unwrap()
-                    && journey.departure_at_of(stop_id, date).is_ok()
-            })
-            .map(|journey| {
-                let journey_departure_at = journey.departure_at_of(stop_id, date).unwrap();
+            .filter(|journey| !journey.is_last_stop(stop_id, true).unwrap())
+            .filter_map(|journey| {
+                let journey_departure_at = journey.departure_at_of(stop_id, date).ok()?;
                 if journey_departure_at > max_departure_at {
                     max_departure_at = journey_departure_at;
                 }
-                (journey, journey_departure_at)
+                Some((journey, journey_departure_at))
             })
             .collect();
+
         (journeys, max_departure_at)
     }
 
@@ -111,7 +112,13 @@ pub fn next_departures(
     journeys
         .into_iter()
         .filter(|(journey, _)| {
-            let hash = journey.hash_route(departure_stop_id).unwrap();
+            // `hash_route` only depends on the (journey, stop) pair, never on the query
+            // date or the rest of the route, so its results are memoized across the
+            // whole search.
+            let hash = hash_route_cache
+                .entry((journey.id(), departure_stop_id))
+                .or_insert_with(|| journey.hash_route(departure_stop_id))
+                .unwrap();
 
             if !routes_to_ignore.contains(&hash) {
                 // The journey is the first to have this destination (terminus).

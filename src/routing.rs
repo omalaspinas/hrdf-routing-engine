@@ -140,8 +140,8 @@ fn find_stops_in_time_range(
         .entries()
         .into_iter()
         .filter(|stop| stop.wgs84_coordinates().is_some())
-        .filter(|stop| {
-            adjust_departure_at(
+        .filter_map(|stop| {
+            let remaining_minutes = adjust_departure_at(
                 departure_at,
                 time_limit,
                 origin_point_latitude,
@@ -149,34 +149,14 @@ fn find_stops_in_time_range(
                 stop,
             )
             .1
-            .num_minutes()
-                > 0
+            .num_minutes();
+            (remaining_minutes > 0).then_some((stop, remaining_minutes))
         })
         // The stop list cannot be empty.
         .collect::<Vec<_>>();
-    stops.sort_by(|lhs, rhs| {
-        adjust_departure_at(
-            departure_at,
-            time_limit,
-            origin_point_latitude,
-            origin_point_longitude,
-            rhs,
-        )
-        .1
-        .num_minutes()
-        .cmp(
-            &adjust_departure_at(
-                departure_at,
-                time_limit,
-                origin_point_latitude,
-                origin_point_longitude,
-                lhs,
-            )
-            .1
-            .num_minutes(),
-        )
-    });
-    stops
+    // Sort by remaining time descending (most slack first), matching the previous behavior.
+    stops.sort_by(|(_, lhs), (_, rhs)| rhs.cmp(lhs));
+    stops.into_iter().map(|(stop, _)| stop).collect::<Vec<_>>()
 }
 
 /// Given a starting point (long/lat) find the Routes given a time limit.
