@@ -7,16 +7,18 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::utils::add_minutes_to_date_time;
 
 use super::{
-    connections::get_connections,
+    connections::{DepartureCache, get_connections},
     models::{Route, RouteSection},
     utils::{RouteQueue, clone_update_route, get_stop_connections},
 };
 
-pub fn explore_routes<F>(
-    data_storage: &DataStorage,
+pub fn explore_routes<'a, F>(
+    data_storage: &'a DataStorage,
     mut routes: RouteQueue,
     journeys_to_ignore: &mut FxHashSet<i32>,
     earliest_arrival_by_stop_id: &mut FxHashMap<i32, NaiveDateTime>,
+    hash_route_cache: &mut FxHashMap<(i32, i32), Option<u64>>,
+    departure_cache: &DepartureCache<'a>,
     mut can_continue_exploration: F,
 ) -> RouteQueue
 where
@@ -36,25 +38,38 @@ where
             continue;
         }
 
-        explore_last_route_section_more_if_possible(data_storage, &route, &mut routes);
+        let can_continue =
+            can_explore_connections(data_storage, &route, earliest_arrival_by_stop_id);
 
-        if !can_explore_connections(data_storage, &route, earliest_arrival_by_stop_id) {
+        if !can_continue {
             // In some cases there are stops appearing multiple times in a Journey
             // for example see: *Z 011709 000801   in FPLAHN
-            // This can lead to an infinite loop. We will therefore check if the same route is explored
-            // a second time
+            // Extending such a route can reproduce an identical Route forever. Detect the
+            // repeat and stop extending *this* route, instead of discarding an unrelated
+            // one from the queue.
             if visited_routes.contains(&route) {
                 log::info!("Routes stayed the same: {}", routes.len());
                 visited_routes.remove(&route);
-                let _ = routes.pop();
-            } else {
-                visited_routes.insert(route.clone());
+                continue;
             }
+            visited_routes.insert(route.clone());
+        }
+
+        explore_last_route_section_more_if_possible(data_storage, &route, &mut routes);
+
+        if !can_continue {
             continue;
         }
 
         explore_nearby_stops(data_storage, &route, &mut routes);
-        explore_connections(data_storage, &route, journeys_to_ignore, &mut new_routes);
+        explore_connections(
+            data_storage,
+            &route,
+            journeys_to_ignore,
+            hash_route_cache,
+            departure_cache,
+            &mut new_routes,
+        );
     }
 
     // All new journeys are recorded as not available for the next connection level.
@@ -80,7 +95,12 @@ fn explore_last_route_section_more_if_possible(
     let new_route = route.extend(data_storage, journey_id, route.arrival_at().date(), false);
 
     if let Some(rou) = new_route {
-        routes.push(rou);
+        // A journey can visit the same stop several times (for example see: *Z 011709 000801
+        // in FPLAHN), in which case extending the route can give back the very same route.
+        // Pushing it would make it be popped, extended and pushed again forever.
+        if rou != *route {
+            routes.push(rou);
+        }
     }
 }
 
@@ -125,13 +145,21 @@ fn can_explore_connections(
     }
 }
 
-fn explore_connections(
-    data_storage: &DataStorage,
+fn explore_connections<'a>(
+    data_storage: &'a DataStorage,
     route: &Route,
     journeys_to_ignore: &FxHashSet<i32>,
+    hash_route_cache: &mut FxHashMap<(i32, i32), Option<u64>>,
+    departure_cache: &DepartureCache<'a>,
     new_routes: &mut RouteQueue,
 ) {
-    for route in get_connections(data_storage, route, journeys_to_ignore) {
+    for route in get_connections(
+        data_storage,
+        route,
+        journeys_to_ignore,
+        hash_route_cache,
+        departure_cache,
+    ) {
         new_routes.push(route);
     }
 }

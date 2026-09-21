@@ -144,7 +144,10 @@ impl Route {
     }
 
     pub fn count_connections(&self) -> usize {
-        self.sections_having_journey().len()
+        self.sections
+            .iter()
+            .filter(|section| section.journey_id().is_some())
+            .count()
     }
 }
 

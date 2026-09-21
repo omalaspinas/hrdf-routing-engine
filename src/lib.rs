@@ -302,6 +302,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
+    #[ignore = "requires downloading external HRDF data"]
     async fn test_journeys() {
         // First build hrdf file
         let hrdf = Hrdf::try_from_year(2025, false, None).await.unwrap();
@@ -326,7 +327,46 @@ mod tests {
         test_find_reachable_stops_within_time_limit(&hrdf);
     }
 
+    /// Regression test for an infinite loop in `explore_routes`.
+    /// Journey 333483 visits some stop several times, so `Route::extend` used to return a Route
+    /// identical to the one just explored. That Route was pushed back in the queue and explored
+    /// again forever. The origin below (hectare 60992524) reaches it from Himmelried,
+    /// Schindelboden (8582811). The computation is done in another thread so that a regression
+    /// fails the test instead of hanging the whole test suite.
     #[test(tokio::test)]
+    #[ignore = "requires downloading external HRDF data"]
+    async fn test_no_infinite_loop_when_journey_revisits_a_stop() {
+        use std::{sync::Arc, sync::mpsc, time::Duration as StdDuration};
+
+        let hrdf = Arc::new(Hrdf::try_from_year(2025, false, None).await.unwrap());
+        let departure_at = create_date_time(2025, 4, 10, 7, 0);
+
+        let (sender, receiver) = mpsc::channel();
+        let hrdf_thread = Arc::clone(&hrdf);
+        std::thread::spawn(move || {
+            let routes = compute_routes_from_origin(
+                &hrdf_thread,
+                47.42233030307928,
+                7.5698344995492715,
+                departure_at,
+                Duration::minutes(60),
+                5,
+                1,
+                10,
+                false,
+            );
+            let _ = sender.send(routes);
+        });
+
+        // The computation takes well under a second when the loop is not present.
+        let routes = receiver
+            .recv_timeout(StdDuration::from_secs(60))
+            .expect("compute_routes_from_origin did not finish: infinite loop in explore_routes");
+        assert!(!routes.is_empty());
+    }
+
+    #[test(tokio::test)]
+    #[ignore = "requires downloading external polygon data"]
     async fn test_real_polygons_cache() {
         let original = ExcludedPolygons::try_new(
             &LAKES_GEOJSON_URLS,
@@ -348,6 +388,7 @@ mod tests {
 
     #[test(tokio::test)]
     #[cfg(feature = "hectare")]
+    #[ignore = "requires downloading external hectare data"]
     async fn test_real_hectare_data_cache() {
         use std::env;
 
