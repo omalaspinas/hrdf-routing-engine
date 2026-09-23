@@ -60,6 +60,10 @@ impl RouteSection {
         self.duration
     }
 
+    pub fn is_walking_trip(&self) -> bool {
+        self.journey_id.is_none()
+    }
+
     // Functions
 
     // pub fn journey<'a>(&'a self, data_storage: &'a DataStorage) -> Option<&Journey> {
@@ -155,6 +159,7 @@ impl Route {
 pub enum RoutingAlgorithmMode {
     SolveFromDepartureStopToArrivalStop,
     SolveFromDepartureStopToReachableArrivalStops,
+    SolveFromArrivalStopToReachableDepartureStops,
 }
 
 pub struct RoutingAlgorithmArgs {
@@ -187,6 +192,14 @@ impl RoutingAlgorithmArgs {
     pub fn solve_from_departure_stop_to_reachable_arrival_stops(time_limit: NaiveDateTime) -> Self {
         Self::new(
             RoutingAlgorithmMode::SolveFromDepartureStopToReachableArrivalStops,
+            None,
+            Some(time_limit),
+        )
+    }
+
+    pub fn solve_from_arrival_stop_to_reachable_departure_stops(time_limit: NaiveDateTime) -> Self {
+        Self::new(
+            RoutingAlgorithmMode::SolveFromArrivalStopToReachableDepartureStops,
             None,
             Some(time_limit),
         )
@@ -384,6 +397,10 @@ impl RouteSectionResult {
 
     pub fn arrival_stop_id(&self) -> i32 {
         self.arrival_stop_id
+    }
+
+    pub fn departure_stop_lv95_coordinates(&self) -> Option<Coordinates> {
+        self.departure_stop_lv95_coordinates
     }
 
     pub fn arrival_stop_lv95_coordinates(&self) -> Option<Coordinates> {
@@ -905,5 +922,41 @@ mod tests {
 
         // Total time should account for walking: (11:03) - (09:55) = 68 minutes
         assert_eq!(route.total_time().num_minutes(), 68);
+    }
+
+    #[test]
+    fn unique_coordinates_from_routes_reverse_uses_the_given_deadline() {
+        use crate::isochrone::unique_coordinates_from_routes_reverse;
+        use hrdf_parser::CoordinateSystem;
+
+        let coords = Coordinates::new(CoordinateSystem::LV95, 2600000.0, 1200000.0);
+        let dep_at =
+            NaiveDateTime::parse_from_str("2025-06-15 10:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let arr_at =
+            NaiveDateTime::parse_from_str("2025-06-15 11:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let sections = vec![RouteSectionResult::new(
+            Some(1),
+            8503000,
+            Some(coords),
+            Some(coords),
+            8507000,
+            Some(coords),
+            Some(coords),
+            Some(dep_at),
+            Some(arr_at),
+            None,
+            Transport::Train,
+        )];
+        let route = RouteResult::new(dep_at, arr_at, sections);
+
+        // compute_average_isochrones_reverse computes routes for each sample's own
+        // deadline; this pins down that unique_coordinates_from_routes_reverse always
+        // measures duration relative to whatever deadline it's given, not a fixed one.
+        let given_deadline =
+            NaiveDateTime::parse_from_str("2025-06-15 11:45:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let result = unique_coordinates_from_routes_reverse(&[route], given_deadline);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].1, given_deadline - dep_at);
     }
 }

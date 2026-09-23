@@ -2,7 +2,7 @@ use orx_parallel::*;
 use std::time::Instant;
 
 use crate::isochrone::{self, IsochroneDisplayMode, compute_isochrones};
-use crate::{IsochroneArgs, RResult};
+use crate::{IsochroneArgs, RResult, ReverseIsochroneArgs};
 use chrono::Duration;
 use geo::MultiPolygon;
 use hrdf_parser::{Coordinates, Hrdf};
@@ -15,6 +15,9 @@ use crate::{
 };
 
 use self::isochrone::compute_average_isochrones;
+use self::isochrone::compute_average_isochrones_reverse;
+use self::isochrone::compute_isochrones_reverse;
+use self::isochrone::compute_optimal_isochrones_reverse;
 use self::isochrone::compute_worst_isochrones;
 use self::isochrone::utils::wgs84_to_lv95;
 
@@ -321,6 +324,114 @@ pub fn run_comparison(
         isochrones_2026.compute_max_area(),
         isochrones_2026.compute_max_distance(coord).1
     );
+
+    Ok(())
+}
+
+pub fn run_simple_reverse(
+    hrdf: Hrdf,
+    excluded_polygons: MultiPolygon,
+    isochrone_args: ReverseIsochroneArgs,
+    display_mode: IsochroneDisplayMode,
+    num_threads: usize,
+) -> RResult<()> {
+    let time_limit = isochrone_args.time_limit.num_minutes();
+    let isochrone_interval = isochrone_args.interval.num_minutes();
+
+    let (x, y) = wgs84_to_lv95(isochrone_args.latitude, isochrone_args.longitude);
+    let coord = Coordinates::new(hrdf_parser::CoordinateSystem::LV95, x, y);
+
+    #[cfg(feature = "svg")]
+    let iso = compute_isochrones_reverse(
+        &hrdf,
+        &excluded_polygons,
+        isochrone_args,
+        display_mode,
+        num_threads,
+    );
+
+    #[cfg(feature = "svg")]
+    iso.write_svg(
+        &format!(
+            "reverse_isochrones_{}_{}.svg",
+            time_limit, isochrone_interval
+        ),
+        1.0 / 100.0,
+        Some(coord),
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn run_optimal_reverse(
+    hrdf: Hrdf,
+    excluded_polygons: MultiPolygon,
+    isochrone_args: ReverseIsochroneArgs,
+    delta_time: Duration,
+    display_mode: IsochroneDisplayMode,
+    num_threads: usize,
+) -> RResult<()> {
+    let time_limit = isochrone_args.time_limit.num_minutes();
+    let isochrone_interval = isochrone_args.interval.num_minutes();
+
+    let (x, y) = wgs84_to_lv95(isochrone_args.latitude, isochrone_args.longitude);
+    let coord = Coordinates::new(hrdf_parser::CoordinateSystem::LV95, x, y);
+
+    let opt_iso = compute_optimal_isochrones_reverse(
+        &hrdf,
+        &excluded_polygons,
+        isochrone_args,
+        delta_time,
+        display_mode,
+        num_threads,
+    );
+
+    #[cfg(feature = "svg")]
+    opt_iso.write_svg(
+        &format!(
+            "reverse_optimal_isochrones_{}_{}.svg",
+            time_limit, isochrone_interval
+        ),
+        1.0 / 100.0,
+        Some(coord),
+    )?;
+
+    Ok(())
+}
+
+pub fn run_average_reverse(
+    hrdf: Hrdf,
+    excluded_polygons: MultiPolygon,
+    isochrone_args: ReverseIsochroneArgs,
+    delta_time: Duration,
+    num_threads: usize,
+) -> RResult<()> {
+    let time_limit = isochrone_args.time_limit.num_minutes();
+    let isochrone_interval = isochrone_args.interval.num_minutes();
+
+    let (x, y) = wgs84_to_lv95(isochrone_args.latitude, isochrone_args.longitude);
+    let coord = Coordinates::new(hrdf_parser::CoordinateSystem::LV95, x, y);
+
+    #[cfg(feature = "svg")]
+    let iso = compute_average_isochrones_reverse(
+        &hrdf,
+        &excluded_polygons,
+        isochrone_args,
+        delta_time,
+        num_threads,
+    );
+
+    #[cfg(feature = "svg")]
+    iso.write_svg(
+        &format!(
+            "reverse_average_isochrones_{}_{}_{}.svg",
+            time_limit,
+            isochrone_interval,
+            delta_time.num_minutes()
+        ),
+        1.0 / 100.0,
+        Some(coord),
+    )?;
 
     Ok(())
 }

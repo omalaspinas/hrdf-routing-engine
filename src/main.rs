@@ -9,8 +9,9 @@ use chrono::Duration;
 use clap::Parser;
 use hrdf_parser::Hrdf;
 use hrdf_routing_engine::{
-    ExcludedPolygons, LAKES_GEOJSON_URLS, plan_journey, run_average, run_comparison, run_debug,
-    run_optimal, run_service, run_simple, run_worst,
+    ExcludedPolygons, LAKES_GEOJSON_URLS, plan_journey, plan_journey_reverse, run_average,
+    run_average_reverse, run_comparison, run_debug, run_optimal, run_optimal_reverse, run_service,
+    run_simple, run_simple_reverse, run_worst,
 };
 #[cfg(feature = "hectare")]
 use hrdf_routing_engine::{HectareData, run_surface_per_ha};
@@ -58,6 +59,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 journey_args.verbose,
             )
             .unwrap_or_else(|| panic!("Error: no journey found for {journey_args}"));
+        }
+        Mode::ReverseJourney {
+            reverse_journey_args,
+        } => {
+            let args = reverse_journey_args.finalize()?;
+            let hrdf = Hrdf::try_from_date(
+                args.arrival_at.date(),
+                cli.force_rebuild,
+                cli.cache_prefix.clone(),
+            )
+            .await?;
+
+            let _ = plan_journey_reverse(
+                &hrdf,
+                args.departure_stop_id,
+                args.arrival_stop_id,
+                args.arrival_at,
+                args.max_num_explorable_connections,
+                args.verbose,
+            )
+            .unwrap_or_else(|| panic!("Error: no reverse journey found for {args}"));
         }
         Mode::Serve { address, ports } => {
             let hrdf_2026 =
@@ -186,6 +208,66 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 args_new,
                 Duration::minutes(delta_time),
                 mode,
+                cli.num_threads,
+            )?;
+        }
+
+        Mode::ReverseSimple {
+            isochrone_args,
+            mode,
+        } => {
+            let isochrone_args = isochrone_args.finalize()?;
+            let hrdf = Hrdf::try_from_date(
+                isochrone_args.arrival_at.date(),
+                cli.force_rebuild,
+                cli.cache_prefix.clone(),
+            )
+            .await?;
+            run_simple_reverse(
+                hrdf,
+                excluded_polygons,
+                isochrone_args,
+                mode,
+                cli.num_threads,
+            )?;
+        }
+        Mode::ReverseOptimal {
+            isochrone_args,
+            delta_time,
+            mode,
+        } => {
+            let isochrone_args = isochrone_args.finalize()?;
+            let hrdf = Hrdf::try_from_date(
+                isochrone_args.arrival_at.date(),
+                cli.force_rebuild,
+                cli.cache_prefix.clone(),
+            )
+            .await?;
+            run_optimal_reverse(
+                hrdf,
+                excluded_polygons,
+                isochrone_args,
+                Duration::minutes(delta_time),
+                mode,
+                cli.num_threads,
+            )?;
+        }
+        Mode::ReverseAverage {
+            isochrone_args,
+            delta_time,
+        } => {
+            let isochrone_args = isochrone_args.finalize()?;
+            let hrdf = Hrdf::try_from_date(
+                isochrone_args.arrival_at.date(),
+                cli.force_rebuild,
+                cli.cache_prefix.clone(),
+            )
+            .await?;
+            run_average_reverse(
+                hrdf,
+                excluded_polygons,
+                isochrone_args,
+                Duration::minutes(delta_time),
                 cli.num_threads,
             )?;
         }

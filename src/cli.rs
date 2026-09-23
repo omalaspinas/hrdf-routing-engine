@@ -5,7 +5,10 @@ use clap::{Parser, Subcommand};
 
 #[cfg(feature = "hectare")]
 use crate::IsochroneHectareArgs;
-use crate::{IsochroneArgs, IsochroneDisplayMode, JourneyArgs, RResult};
+use crate::{
+    IsochroneArgs, IsochroneDisplayMode, JourneyArgs, RResult, ReverseIsochroneArgs,
+    ReverseJourneyArgs,
+};
 
 #[derive(Parser, Debug, Clone)]
 pub struct IsochroneArgsBuilder {
@@ -105,6 +108,45 @@ impl JourneyArgsBuilder {
     }
 }
 
+#[derive(Parser, Debug, Clone)]
+pub struct ReverseJourneyArgsBuilder {
+    /// Departure stop id
+    #[arg(long, default_value_t = 8587418)]
+    departure_stop_id: i32,
+    /// Arrival stop id
+    #[arg(long, default_value_t = 8595120)]
+    arrival_stop_id: i32,
+    /// Arrival date and time
+    #[arg(short, long, default_value_t = String::from("2025-09-17 18:58:00"))]
+    arrival_at: String,
+    /// Maximum number of connections
+    #[arg(short, long, default_value_t = 10)]
+    max_num_explorable_connections: i32,
+    /// Verbose on or off
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
+}
+
+impl ReverseJourneyArgsBuilder {
+    pub fn finalize(self) -> RResult<ReverseJourneyArgs> {
+        let Self {
+            departure_stop_id,
+            arrival_stop_id,
+            arrival_at,
+            max_num_explorable_connections,
+            verbose,
+        } = self;
+
+        Ok(ReverseJourneyArgs {
+            departure_stop_id,
+            arrival_stop_id,
+            arrival_at: NaiveDateTime::parse_from_str(&arrival_at, "%Y-%m-%d %H:%M:%S")?,
+            max_num_explorable_connections,
+            verbose,
+        })
+    }
+}
+
 #[cfg(feature = "hectare")]
 #[derive(Parser, Debug)]
 pub struct IsochroneHectareArgsBuilder {
@@ -146,6 +188,60 @@ impl IsochroneHectareArgsBuilder {
     }
 }
 
+#[derive(Parser, Debug, Clone)]
+pub struct ReverseIsochroneArgsBuilder {
+    /// Destination latitude
+    #[arg(long, default_value_t = 46.20956654)]
+    latitude: f64,
+    /// Destination longitude
+    #[arg(long, default_value_t = 6.13536000)]
+    longitude: f64,
+    /// Arrival date and time
+    #[arg(short, long, default_value_t = String::from("2025-04-10 15:36:00"))]
+    arrival_at: String,
+    /// Maximum time of the isochrone in minutes
+    #[arg(short, long, default_value_t = 60)]
+    time_limit: i64,
+    /// Time interval between two isochrone in minutes
+    #[arg(short, long, default_value_t = 10)]
+    interval: i64,
+    /// Maximum number of connections
+    #[arg(short, long, default_value_t = 10)]
+    max_num_explorable_connections: i32,
+    /// Number of starting points
+    #[arg(short, long, default_value_t = 5)]
+    num_starting_points: usize,
+    /// Verbose on or off
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
+}
+
+impl ReverseIsochroneArgsBuilder {
+    pub fn finalize(self) -> RResult<ReverseIsochroneArgs> {
+        let Self {
+            latitude,
+            longitude,
+            arrival_at,
+            time_limit,
+            interval,
+            max_num_explorable_connections,
+            num_starting_points,
+            verbose,
+        } = self;
+
+        Ok(ReverseIsochroneArgs {
+            latitude,
+            longitude,
+            arrival_at: NaiveDateTime::parse_from_str(&arrival_at, "%Y-%m-%d %H:%M:%S")?,
+            time_limit: Duration::minutes(time_limit),
+            interval: Duration::minutes(interval),
+            max_num_explorable_connections,
+            num_starting_points,
+            verbose,
+        })
+    }
+}
+
 #[derive(Subcommand)]
 pub enum Mode {
     /// Serve mode to a given port
@@ -164,6 +260,11 @@ pub enum Mode {
     Journey {
         #[command(flatten)]
         journey_args: JourneyArgsBuilder,
+    },
+    /// Reverse Journey mode to find latest departure
+    ReverseJourney {
+        #[command(flatten)]
+        reverse_journey_args: ReverseJourneyArgsBuilder,
     },
     /// Compare between two years for the optimal isochrone for a given duration
     Compare {
@@ -213,6 +314,33 @@ pub enum Mode {
     Average {
         #[command(flatten)]
         isochrone_args: IsochroneArgsBuilder,
+        /// The +/- duration on which to compute the average (in minutes)
+        #[arg(long, default_value_t = 30)]
+        delta_time: i64,
+    },
+    /// Reverse isochrone: find all origins from which a destination can be reached
+    ReverseSimple {
+        #[command(flatten)]
+        isochrone_args: ReverseIsochroneArgsBuilder,
+        /// Display mode of the isochrones: circles or contour_line
+        #[arg(long, default_value_t = IsochroneDisplayMode::Circles)]
+        mode: IsochroneDisplayMode,
+    },
+    /// Reverse optimal isochrone (largest surface)
+    ReverseOptimal {
+        #[command(flatten)]
+        isochrone_args: ReverseIsochroneArgsBuilder,
+        /// The +/- duration on which to compute the optimal (in minutes)
+        #[arg(long, default_value_t = 30)]
+        delta_time: i64,
+        /// Display mode of the isochrones: circles or contour_line
+        #[arg(long, default_value_t = IsochroneDisplayMode::Circles)]
+        mode: IsochroneDisplayMode,
+    },
+    /// Reverse average isochrone
+    ReverseAverage {
+        #[command(flatten)]
+        isochrone_args: ReverseIsochroneArgsBuilder,
         /// The +/- duration on which to compute the average (in minutes)
         #[arg(long, default_value_t = 30)]
         delta_time: i64,

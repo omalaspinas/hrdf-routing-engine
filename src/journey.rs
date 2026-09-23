@@ -20,3 +20,22 @@ impl Display for JourneyArgs {
         )
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct ReverseJourneyArgs {
+    pub departure_stop_id: i32,
+    pub arrival_stop_id: i32,
+    pub arrival_at: NaiveDateTime,
+    pub max_num_explorable_connections: i32,
+    pub verbose: bool,
+}
+
+impl Display for ReverseJourneyArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "departure_stop_id: {}, arrival_stop_id: {}, arrival_at: {}",
+            self.departure_stop_id, self.arrival_stop_id, self.arrival_at
+        )
+    }
+}

@@ -76,6 +76,81 @@ impl RouteQueue {
     }
 }
 
+#[derive(Debug)]
+struct RouteHeapItemReverse {
+    arrival_at: NaiveDateTime,
+    seq: u64,
+    route: Route,
+}
+
+impl Eq for RouteHeapItemReverse {}
+
+impl PartialEq for RouteHeapItemReverse {
+    fn eq(&self, other: &Self) -> bool {
+        self.arrival_at == other.arrival_at && self.seq == other.seq
+    }
+}
+
+impl Ord for RouteHeapItemReverse {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse ordering compared to RouteHeapItem:
+        // We want the LATEST time (larger NaiveDateTime) to be popped FIRST.
+        // BinaryHeap is a Max-Heap (pops largest element).
+        // Standard NaiveDateTime comparison: t1 > t2 means t1 is "larger" (later).
+        // So simply comparing self.arrival_at with other.arrival_at gives us a Max-Heap behavior on time.
+        // Later times will be popped first.
+        match self.arrival_at.cmp(&other.arrival_at) {
+            Ordering::Equal => other.seq.cmp(&self.seq), // Keep FIFO for same time
+            ordering => ordering,
+        }
+    }
+}
+
+impl PartialOrd for RouteHeapItemReverse {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+pub struct RouteQueueReverse {
+    heap: BinaryHeap<RouteHeapItemReverse>,
+    seq: u64,
+}
+
+impl RouteQueueReverse {
+    pub fn new() -> Self {
+        Self {
+            heap: BinaryHeap::new(),
+            seq: 0,
+        }
+    }
+
+    pub fn push(&mut self, route: Route) {
+        self.heap.push(RouteHeapItemReverse {
+            arrival_at: route.arrival_at(),
+            seq: self.seq,
+            route,
+        });
+        self.seq += 1;
+    }
+
+    pub fn pop(&mut self) -> Option<Route> {
+        self.heap.pop().map(|item| item.route)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.heap.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.heap.len()
+    }
+
+    pub fn iter_routes(&self) -> impl Iterator<Item = &Route> {
+        self.heap.iter().map(|item| &item.route)
+    }
+}
+
 pub fn clone_update_route<F>(route: &Route, f: F) -> Route
 where
     F: FnOnce(&mut Vec<RouteSection>, &mut FxHashSet<i32>),
@@ -96,6 +171,24 @@ pub fn get_stop_connections(
         .stop_connections_by_stop_id()
         .get(&stop_id)
         // .map(|ids| data_storage.stop_connections().resolve_ids(ids))?
+        .map(|ids| {
+            data_storage
+                .stop_connections()
+                .resolve_ids(ids)
+                .unwrap_or_else(|| panic!("Ids {:?} not found.", ids))
+        })
+}
+
+/// Connections into `stop_id` (`stop_id_2 == stop_id`), the reverse of
+/// `get_stop_connections`. `stop_connections_by_stop_id` only indexes
+/// `stop_id_1`, so this needs the caller-built incoming index instead.
+pub fn get_incoming_stop_connections<'a>(
+    data_storage: &'a DataStorage,
+    incoming_stop_connections_by_stop_id: &FxHashMap<i32, FxHashSet<i32>>,
+    stop_id: i32,
+) -> Option<Vec<&'a StopConnection>> {
+    incoming_stop_connections_by_stop_id
+        .get(&stop_id)
         .map(|ids| {
             data_storage
                 .stop_connections()
@@ -350,5 +443,90 @@ mod tests {
         queue.push(create_test_route("11:00", 4));
         // Seq should continue incrementing
         assert_eq!(queue.seq, 4);
+    }
+
+    #[test]
+    fn test_route_queue_reverse_ordering() {
+        let mut queue = RouteQueueReverse::new();
+
+        // Push routes with different times
+        let route_08_00 = create_test_route("08:00", 1);
+        let route_10_00 = create_test_route("10:00", 2);
+        let route_12_00 = create_test_route("12:00", 3);
+
+        queue.push(route_08_00.clone());
+        queue.push(route_10_00.clone());
+        queue.push(route_12_00.clone());
+
+        // In reverse queue (Max-Heap), the LATEST time should come first
+        let popped1 = queue.pop().unwrap();
+        assert_eq!(popped1.arrival_at(), route_12_00.arrival_at());
+
+        let popped2 = queue.pop().unwrap();
+        assert_eq!(popped2.arrival_at(), route_10_00.arrival_at());
+
+        let popped3 = queue.pop().unwrap();
+        assert_eq!(popped3.arrival_at(), route_08_00.arrival_at());
+    }
+
+    #[test]
+    fn test_route_queue_reverse_for_same_arrival_time() {
+        let mut queue = RouteQueueReverse::new();
+
+        // Push multiple routes with the same arrival time
+        let route1 = create_test_route("10:00", 1);
+        let route2 = create_test_route("10:00", 2);
+        let route3 = create_test_route("10:00", 3);
+
+        queue.push(route1.clone());
+        queue.push(route2.clone());
+        queue.push(route3.clone());
+
+        assert_eq!(queue.len(), 3);
+
+        // Routes with same arrival time should be popped in FIFO order (seq maintains order)
+        let popped1 = queue.pop().unwrap();
+        assert_eq!(popped1.arrival_stop_id(), route1.arrival_stop_id());
+
+        let popped2 = queue.pop().unwrap();
+        assert_eq!(popped2.arrival_stop_id(), route2.arrival_stop_id());
+
+        let popped3 = queue.pop().unwrap();
+        assert_eq!(popped3.arrival_stop_id(), route3.arrival_stop_id());
+
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn test_route_queue_reverse_priority_ordering() {
+        let mut queue = RouteQueueReverse::new();
+
+        // Push routes in non-sorted order
+        let route_15_00 = create_test_route("15:00", 1);
+        let route_10_00 = create_test_route("10:00", 2);
+        let route_12_30 = create_test_route("12:30", 3);
+        let route_08_00 = create_test_route("08:00", 4);
+
+        queue.push(route_15_00.clone());
+        queue.push(route_10_00.clone());
+        queue.push(route_12_30.clone());
+        queue.push(route_08_00.clone());
+
+        assert_eq!(queue.len(), 4);
+
+        // Pop routes - should come out in arrival time order (earliest first)
+        let popped1 = queue.pop().unwrap();
+        assert_eq!(popped1.arrival_at(), route_15_00.arrival_at());
+
+        let popped2 = queue.pop().unwrap();
+        assert_eq!(popped2.arrival_at(), route_12_30.arrival_at());
+
+        let popped3 = queue.pop().unwrap();
+        assert_eq!(popped3.arrival_at(), route_10_00.arrival_at());
+
+        let popped4 = queue.pop().unwrap();
+        assert_eq!(popped4.arrival_at(), route_08_00.arrival_at());
+
+        assert!(queue.is_empty());
     }
 }
